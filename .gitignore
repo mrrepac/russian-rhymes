@@ -1,0 +1,7 @@
+node_modules/
+main.js
+data.json
+dict/
+dict-release/
+tools/sources/
+*.map

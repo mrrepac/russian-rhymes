@@ -1,0 +1,10 @@
+{
+  "id": "russian-rhymes",
+  "name": "Russian Rhymes",
+  "version": "0.1.0",
+  "minAppVersion": "1.7.2",
+  "description": "Offline Russian rhyming dictionary: rhymes, stress marks and synonyms for the selected word. Press Ctrl+C twice to look up a word.",
+  "author": "mrrepac",
+  "authorUrl": "https://github.com/mrrepac",
+  "isDesktopOnly": false
+}
