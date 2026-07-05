@@ -1,0 +1,33 @@
+{
+  "name": "russian-rhymes",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Obsidian plugin: offline Russian rhyming dictionary with stress marks and synonyms.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "dict": "node tools/build-dict.mjs"
+  },
+  "keywords": [
+    "obsidian-plugin",
+    "rhymes",
+    "russian"
+  ],
+  "author": "mrrepac",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "@types/pako": "^2.0.3",
+    "esbuild": "0.17.3",
+    "obsidian": "latest",
+    "tslib": "2.4.0",
+    "typescript": "4.7.4"
+  },
+  "dependencies": {
+    "pako": "^2.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.17.3": true
+  }
+}

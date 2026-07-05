@@ -1,0 +1,45 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      # только версионные теги (0.1.0), но НЕ тег `dict` с ассетами словаря
+      - "*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "main.js"
+
+      - name: Create or update release with assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          # если релиз уже создан вручную — не падаем, а до-заливаем ассеты (с provenance)
+          gh release create "$tag" \
+            --title="$tag" \
+            --notes="Russian Rhymes $tag. See README for details." \
+            main.js manifest.json styles.css \
+            || gh release upload "$tag" main.js manifest.json styles.css --clobber
