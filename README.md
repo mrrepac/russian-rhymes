@@ -7,6 +7,7 @@ An **offline Russian rhyming dictionary** for [Obsidian](https://obsidian.md): r
 ## Highlights
 
 - **Rhymes by sound, not by spelling** — a phonetic rhyme key (stress-tail normalization: vowel reduction, final devoicing, consonant clusters) groups words the way they actually sound. Four tiers: exact · near · slant (consonance) · assonance, plus alliteration.
+- **Follow the cursor** — the panel keeps showing rhymes for the last word of the line you are typing; unfinished and unknown words are skipped, so the list never flickers.
 - **Stress marks** — every word is shown with its stress; click any vowel to move the stress and re-rank the rhymes. Your manual choices are remembered.
 - **Meaning tab** — definitions with usage examples and etymology (from Russian Wiktionary), plus a collapsible word-forms table.
 - **Associations tab** — synonyms, antonyms, hypernyms/hyponyms, related words, set phrases, proverbs, associations, metagrams and anagrams, each in a collapsible section.
@@ -20,6 +21,7 @@ An **offline Russian rhyming dictionary** for [Obsidian](https://obsidian.md): r
 - Select a word and press **Ctrl+C twice** quickly to look it up (the delay is configurable; set it to 0 to disable).
 - Or open the panel from the ribbon (feather icon) / the command palette and type a word.
 - Or right-click a word in the editor → **Rhymes for "…"**.
+- Or turn on **follow the cursor** (the crosshair button next to the search field, a command, or the setting) and just write — rhymes for the end of the current line appear on their own.
 
 In the panel: single-click a word to copy it, double-click to jump into its rhymes. `Ctrl + ← / →` (or a horizontal swipe on mobile) cycles through the sections.
 
