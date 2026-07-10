@@ -75,6 +75,35 @@
   padding: var(--size-2-1);
 }
 
+/* тумблер «следовать за курсором» — рядом с полем поиска */
+.rr-follow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0 var(--size-4-2);
+  cursor: pointer;
+  color: var(--text-faint);
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--input-radius, var(--radius-s));
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.rr-follow:hover {
+  color: var(--text-normal);
+}
+
+.rr-follow.is-on {
+  color: var(--text-accent);
+  border-color: var(--interactive-accent);
+}
+
+.rr-follow svg {
+  width: 16px;
+  height: 16px;
+}
+
 .rr-search .rr-input,
 .rr-search .rr-input:hover,
 /* !important здесь перекрывает СОБСТВЕННЫЙ хром Obsidian для input[type=text]

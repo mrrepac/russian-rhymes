@@ -92,6 +92,7 @@ export class RhymesView extends ItemView {
 
   private inputEl!: HTMLInputElement;
   private clearBtn!: HTMLElement; // × очистки поля поиска (видна, когда есть текст)
+  private followBtn!: HTMLElement; // тумблер «следовать за курсором»
   private bodyEl!: HTMLElement;
   private resultsHost: HTMLElement | null = null; // фильтры+список звукового раздела — перерисовываем только его
   private copyTimers = new Set<number>(); // отложенные таймеры одиночного клика (копия) — гасим при закрытии/перерисовке
@@ -138,6 +139,13 @@ export class RhymesView extends ItemView {
     setIcon(this.clearBtn, "x");
     this.clearBtn.setAttr("aria-label", t("clearSearch"));
     this.registerDomEvent(this.clearBtn, "click", () => this.clearSearch());
+
+    // тумблер «следовать за курсором»: панель сама идёт за строкой, которую пишут
+    this.followBtn = head.createDiv({ cls: "rr-follow" });
+    setIcon(this.followBtn, "crosshair");
+    this.followBtn.setAttr("aria-label", t("followHint"));
+    this.registerDomEvent(this.followBtn, "click", () => void this.plugin.setFollow(!this.plugin.settings.followCursor));
+    this.updateFollowBtn();
 
     // пробел на вкладке «Генератор» — новое слово (когда фокус в панели, не в поле ввода/редакторе)
     this.registerDomEvent(document, "keydown", (e) => {
@@ -350,6 +358,36 @@ export class RhymesView extends ItemView {
 
   hasWord(): boolean {
     return this.word.length > 0;
+  }
+
+  /** Подсветить кнопку слежения по текущему состоянию настройки. */
+  updateFollowBtn(): void {
+    this.followBtn?.toggleClass("is-on", this.plugin.settings.followCursor);
+  }
+
+  /** Уйти с генератора: включили слежение — панель должна показывать рифмы, а не пасхалку. */
+  leaveGenerator(): void {
+    if (this.tab !== "gen") return;
+    this.tab = "rhymes";
+    this.renderBody();
+  }
+
+  /**
+   * Слово из строки под курсором (режим слежения). Молча пропускаем всё, из-за чего
+   * выдача мигала бы: недописанные и незнакомые слова, повтор текущего, набор в поле
+   * поиска, вкладку генератора. Историю «назад» слежение не копит — это новая точка отсчёта.
+   */
+  async followWord(raw: string): Promise<void> {
+    const dict = this.plugin.dict;
+    if (dict.status !== "ready") return;
+    if (this.tab === "gen") return;
+    if (activeDocument.activeElement === this.inputEl) return;
+    const word = dict.normalizeYo(raw);
+    if (word === this.word) return;
+    if (!dict.lookup(word)) return;
+    this.navStack = [];
+    this.navPos = -1;
+    await this.showWord(word);
   }
 
   /** Перезапросить данные текущего слова (после подключения личного словаря). */

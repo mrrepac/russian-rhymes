@@ -9,6 +9,13 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === "production";
 
+// Locally the built main.js is written straight into the installed plugin inside
+// the Obsidian vault. If the vault ever moves, update this one path.
+const VAULT_PLUGIN = "D:/Obsidian/mrrepac/.obsidian/plugins/russian-rhymes";
+// On CI that path is not absolute, so the release workflow would never find the
+// bundle: there the artifact belongs in the repository root next to manifest.json.
+const outfile = process.env.CI ? "main.js" : `${VAULT_PLUGIN}/main.js`;
+
 const buildOptions = {
   banner: {
     js: banner,
@@ -21,7 +28,7 @@ const buildOptions = {
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,
-  outfile: "main.js"
+  outfile
 };
 
 if (prod) {

@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Notice, Platform, Plugin, PluginSettingTab, Setting, ToggleComponent, WorkspaceLeaf, setIcon } from "obsidian";
+import { App, Debouncer, Editor, MarkdownView, Notice, Platform, Plugin, PluginSettingTab, Setting, ToggleComponent, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import { RhymeDict } from "./dict";
 import { RhymesView, VIEW_TYPE_RHYMES } from "./view";
 import { convertDsl } from "./dsl";
@@ -12,6 +12,8 @@ interface RhymesSettings {
   dictUrl: string;
   /** Пасхалка: открыт ли генератор слов (разблокируется словом «фристайл»). */
   genUnlocked: boolean;
+  /** Панель сама показывает рифмы к последнему слову строки, в которой стоит курсор. */
+  followCursor: boolean;
 }
 
 /** Личный толковый словарь пользователя (из DSL). Порядок массива = порядок в «Значении». */
@@ -27,7 +29,17 @@ const DEFAULT_SETTINGS: RhymesSettings = {
   lexShow: [true, true, true, false],
   dictUrl: "https://github.com/mrrepac/russian-rhymes/releases/download/dict/",
   genUnlocked: false,
+  followCursor: false,
 };
+
+/**
+ * Пауза после последнего движения курсора, через которую панель подхватывает слово.
+ * Полсекунды: пока набор идёт без остановки, рифмы не пересчитываются ни разу, а на
+ * паузе слово почти всегда уже дописано (иначе панель дёргалась бы на «явила» → «явилась»).
+ */
+const FOLLOW_DELAY_MS = 500;
+/** Короче этого слово в конце строки не берём: «в», «и», «я» рифмовать незачем. */
+const MIN_FOLLOW_LEN = 3;
 
 interface PersistedData {
   settings?: RhymesSettings;
@@ -43,6 +55,11 @@ export default class RussianRhymesPlugin extends Plugin {
   private lastCopyAt = 0;
   // после двойного Ctrl+C, пока Ctrl не отпущен, стрелки ←/→ листают разделы панели
   private navArmed = false;
+  // режим «следовать за курсором»: реагируем на паузу в наборе, а не на каждый символ
+  private followSync: Debouncer<[], void> = debounce(() => this.syncFromCursor(), FOLLOW_DELAY_MS, true);
+  // что панель уже показала по редактору; пока это не изменилось, слежение молчит и не
+  // перебивает слово, выбранное вручную (двойной клик по чипу, двойной Ctrl+C, поле поиска)
+  private lastFollowKey = "";
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -66,6 +83,23 @@ export default class RussianRhymesPlugin extends Plugin {
         if (w) void this.activateView(w);
       },
     });
+    this.addCommand({
+      id: "toggle-follow",
+      name: t("cmdFollow"),
+      callback: () => void this.setFollow(!this.settings.followCursor),
+    });
+
+    // «следовать за курсором»: selectionchange ловит и набор, и стрелки, и клик мышью;
+    // editor-change добавлен ради правок в отдельном окне (popout), куда наш document не смотрит
+    this.registerDomEvent(document, "selectionchange", () => {
+      if (this.settings.followCursor) this.followSync();
+    });
+    this.registerEvent(
+      this.app.workspace.on("editor-change", () => {
+        if (this.settings.followCursor) this.followSync();
+      })
+    );
+    this.register(() => this.followSync.cancel()); // выгрузка плагина не должна оставить висящий вызов
 
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
@@ -237,6 +271,60 @@ export default class RussianRhymesPlugin extends Plugin {
     return leaf && leaf.view instanceof RhymesView ? leaf.view : null;
   }
 
+  /** Включить/выключить слежение за курсором (кнопка в панели, команда, настройка). */
+  async setFollow(on: boolean): Promise<void> {
+    this.settings.followCursor = on;
+    await this.saveSettings();
+    // отзываемся сразу: ниже словарь может грузиться секунды (мобильный)
+    this.getRhymesView()?.updateFollowBtn(); // новая панель подсветит кнопку сама, в onOpen
+    new Notice(t(on ? "followOn" : "followOff"));
+    if (!on) return;
+
+    const leaf = await this.ensureViewInSidebar(true);
+    if (leaf?.isDeferred) await leaf.loadIfDeferred();
+    // словарь ленив на мобильном и ещё греется первые секунды на десктопе; load() идемпотентен
+    if (this.dict.status === "idle" || this.dict.status === "loading") await this.dict.load();
+    if (this.dict.status !== "ready") {
+      new Notice(t("dictMissing")); // следовать не за чем: словарь не скачан
+      return;
+    }
+    this.getRhymesView()?.leaveGenerator();
+    // панель только что раскрыли, активным стал её лист — слово берём из последнего редактора
+    this.syncFromCursor(true);
+  }
+
+  /**
+   * Показать в панели рифмы к последнему слову строки, где стоит курсор.
+   * useRecent — брать последний редактор, даже если активна сама панель (сразу после её раскрытия).
+   */
+  private syncFromCursor(useRecent = false): void {
+    if (!this.settings.followCursor) return;
+    const view = this.getRhymesView();
+    if (!view || !view.containerEl.isShown()) return; // панель свёрнута — незачем считать рифмы
+    let mv = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!mv && useRecent) {
+      const leaf = this.app.workspace.getMostRecentLeaf();
+      if (leaf && leaf.view instanceof MarkdownView) mv = leaf.view;
+    }
+    if (!mv || mv.getMode() !== "source") return; // режим чтения — курсора нет
+
+    // есть выделение — рифмуем его (как двойной Ctrl+C), иначе конец строки с курсором
+    const selection = mv.editor.getSelection();
+    const cursor = mv.editor.getCursor();
+    const source = selection || mv.editor.getLine(cursor.line);
+    // клики в самой панели тоже шлют selectionchange: без этой отсечки слежение
+    // возвращало бы панель к строке редактора, отменяя провал в рифму двойным кликом
+    const key = selection ? "s\n" + selection : cursor.line + "\n" + source;
+    if (!useRecent && key === this.lastFollowKey) return;
+    this.lastFollowKey = key;
+
+    const word = this.extractWord(source);
+    // короткие слова (в, и, я) как конец строки бессмысленны и только дёргают выдачу
+    if (word && word.length >= MIN_FOLLOW_LEN) {
+      view.followWord(word).catch((e) => console.error("Russian Rhymes: follow failed", e));
+    }
+  }
+
   /** Перерисовать открытую панель (после подключения/очистки личного словаря). */
   refreshPanel(): void {
     this.getRhymesView()?.refresh();
@@ -303,6 +391,15 @@ class RhymesSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
+
+    new Setting(containerEl)
+      .setName(t("settingFollow"))
+      .setDesc(t("settingFollowDesc"))
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.followCursor).onChange(async (v) => {
+          await this.plugin.setFollow(v);
+        })
+      );
 
     // скачивание словаря: для мобильного/новой установки, где нет папки dict/
     new Setting(containerEl).setName(t("dlHeading")).setHeading();

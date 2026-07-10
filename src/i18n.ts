@@ -103,6 +103,13 @@ const en = {
   clearSearch: "Clear",
   notFoundManual: "Word not in the dictionary. Click the stressed vowel above — rhymes will be found by sound.",
   also: "also: ",
+  cmdFollow: "Follow the cursor (on/off)",
+  followHint: "Follow the cursor: rhymes for the last word of the line you are typing",
+  followOn: "Following the cursor",
+  followOff: "No longer following the cursor",
+  settingFollow: "Follow the cursor",
+  settingFollowDesc:
+    "While you type, the panel shows rhymes for the last word of the current line (or for the selection). It refreshes when you pause; words the dictionary does not know are skipped, so the list does not flicker.",
 };
 
 const ru: typeof en = {
@@ -208,6 +215,13 @@ const ru: typeof en = {
   clearSearch: "Очистить",
   notFoundManual: "Слова нет в словаре. Кликните ударную гласную в слове выше — рифмы подберутся по звучанию.",
   also: "также: ",
+  cmdFollow: "Следовать за курсором (вкл/выкл)",
+  followHint: "Следовать за курсором: рифмы к последнему слову строки, которую пишете",
+  followOn: "Следую за курсором",
+  followOff: "Больше не слежу за курсором",
+  settingFollow: "Следовать за курсором",
+  settingFollowDesc:
+    "Пока вы пишете, панель показывает рифмы к последнему слову текущей строки (или к выделению). Обновляется в паузах набора; слова, которых нет в словаре, пропускаются — выдача не мигает.",
 };
 
 export type I18nKey = keyof typeof en;
