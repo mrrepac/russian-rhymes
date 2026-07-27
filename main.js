@@ -7435,7 +7435,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     var _a;
     await this.loadSettings();
     this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
-    this.dict.setLocalManifest(this.localDicts.map((d) => ({ id: d.id, name: d.name, enabled: d.enabled })));
+    this.syncLocalManifest();
     this.dict.setLocalDir(this.settings.localDictDir);
     this.applyDictDirStyle();
     this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
@@ -7584,6 +7584,15 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     }
     delete this.settings.showRare;
     delete this.settings.pageSize;
+  }
+  /**
+   * Отдать словарю список личных словарей целиком. Именно целиком: раньше тут
+   * перечислялись поля по одному и kind в список не попадал, поэтому после каждого
+   * запуска Obsidian все словари синонимов считались толковыми и уезжали из
+   * «Ассоциаций» во «Значение» — до первого повторного импорта.
+   */
+  syncLocalManifest() {
+    this.dict.setLocalManifest(this.localDicts);
   }
   async saveSettings() {
     const data = { settings: this.settings, userStress: this.userStress, localDicts: this.localDicts };
