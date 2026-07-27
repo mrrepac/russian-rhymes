@@ -54,12 +54,18 @@ Because the compiled data includes ShareAlike sources, the dictionary as a whole
 
 ## Development
 
-```bash
-npm install
-npm run build   # tsc type-check + esbuild bundle → main.js
-```
+There is no build step. `main.js` is a plain bundle kept in the repository and edited directly —
+copy it (together with `manifest.json` and `styles.css`) into
+`<vault>/.obsidian/plugins/russian-rhymes/` and reload the plugin to test.
 
-The dictionary is built from the sources above with the scripts in `tools/` (see `tools/sources/README.md`). `main.js` and `dict/` are git-ignored; the release workflow builds `main.js` from source on a version tag push.
+`tests/` holds a headless test suite: the scripts lift classes out of `main.js` with `new Function`
+and run them against stub Obsidian objects, a fake DOM and an in-memory vault adapter, so they check
+exactly the file that ships. They need Node and the built dictionary; see `tests/README.md`.
+
+The dictionary itself is built from the sources above with the scripts in `tools/` (see
+`tools/sources/README.md`); they use only Node built-ins, so `node tools/build-dict.mjs` is enough.
+`dict/` is git-ignored — the data is published under the `dict` tag and downloaded by the plugin on
+first use. Pushing a version tag (`1.9.1`) publishes a release with the three plugin files.
 
 ## License
 

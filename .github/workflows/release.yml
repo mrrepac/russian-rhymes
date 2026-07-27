@@ -3,7 +3,7 @@ name: Release Obsidian plugin
 on:
   push:
     tags:
-      # только версионные теги (0.1.0), но НЕ тег `dict` с ассетами словаря
+      # только версионные теги (1.9.1), но НЕ тег `dict` с ассетами словаря
       - "*.*.*"
 
 permissions:
@@ -12,25 +12,19 @@ permissions:
   attestations: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install and build
-        run: |
-          npm ci
-          npm run build
-
-      - name: Attest build provenance
+      # сборки нет: main.js лежит в репозитории и правится напрямую
+      - name: Attest build provenance for release assets
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: "main.js"
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Create or update release with assets
         env:
