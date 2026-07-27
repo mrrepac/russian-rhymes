@@ -58,14 +58,10 @@ There is no build step. `main.js` is a plain bundle kept in the repository and e
 copy it (together with `manifest.json` and `styles.css`) into
 `<vault>/.obsidian/plugins/russian-rhymes/` and reload the plugin to test.
 
-`tests/` holds a headless test suite: the scripts lift classes out of `main.js` with `new Function`
-and run them against stub Obsidian objects, a fake DOM and an in-memory vault adapter, so they check
-exactly the file that ships. They need Node and the built dictionary; see `tests/README.md`.
-
-The dictionary itself is built from the sources above with the scripts in `tools/` (see
-`tools/sources/README.md`); they use only Node built-ins, so `node tools/build-dict.mjs` is enough.
-`dict/` is git-ignored — the data is published under the `dict` tag and downloaded by the plugin on
-first use. Pushing a version tag (`1.9.1`) publishes a release with the three plugin files.
+The headless test suite and the scripts that compile the dictionary from the sources above are
+kept outside this repository. `dict/` is not committed either — the data is published under the
+`dict` tag and downloaded by the plugin on first use. Pushing a version tag (`1.9.2`) publishes a
+release with the three plugin files.
 
 ## License
 
