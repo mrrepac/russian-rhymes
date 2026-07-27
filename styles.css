@@ -128,6 +128,9 @@
   gap: var(--size-4-2);
   overflow-y: auto;
   flex: 1;
+  /* при overflow-y: auto браузер делает и горизонтальную прокрутку, стоит чему-нибудь
+     не влезть по ширине. В словарях попадаются слова в 40+ букв — рвём их, а не панель */
+  overflow-wrap: anywhere;
 }
 
 .rr-status {
@@ -282,6 +285,35 @@
   padding: var(--size-2-2) 11px;
 }
 
+/* сброс липких фильтров: появляется только когда фильтры реально что-то режут —
+   и в ряду фильтров, и в сообщении «рифмы не найдены» */
+.rr-fclear {
+  font-size: var(--font-ui-smaller);
+  line-height: 1.6;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px dashed var(--background-modifier-border);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: none;
+  height: auto;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.rr-fclear:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.rr-status .rr-fclear {
+  margin-left: var(--size-4-2);
+}
+
+.is-phone .rr-fclear {
+  padding: var(--size-2-2) 11px;
+}
+
 .rr-bigtabs {
   display: flex;
   flex-direction: column;
@@ -414,6 +446,12 @@
   font-style: italic;
 }
 
+/* встроенный Викисловарь идёт первым — подпись у него чуть заметнее, чем у остальных */
+.rr-def-pos.is-wiki {
+  color: var(--text-accent);
+  font-style: normal;
+}
+
 .rr-def-list {
   margin: var(--size-2-1) 0 0 0;
   padding-left: 1.4em;
@@ -531,6 +569,7 @@
 }
 
 .rr-chip {
+  max-width: 100%;
   padding: var(--size-2-1) var(--size-4-1);
   border-radius: var(--radius-s);
   background: var(--background-secondary);
@@ -545,6 +584,21 @@
 
 .rr-chip:hover {
   background: var(--background-modifier-hover);
+}
+
+/* долгое нажатие вставляет слово в заметку — на телефоне гасим «лупу» и системное выделение,
+   чтобы вместо вставки не всплыло меню копирования */
+.rr-chip,
+.rr-form-val,
+.rr-phrase-text,
+.rr-defword {
+  -webkit-touch-callout: none;
+}
+
+.is-phone .rr-form-val,
+.is-phone .rr-phrase-text,
+.is-phone .rr-defword {
+  user-select: none;
 }
 
 /* лексические слои читаются рамкой/цветом, не жирностью — иначе знак ударения плывёт:
@@ -748,6 +802,15 @@
   flex-shrink: 0;
 }
 
+/* словарь есть в списке (список ездит синхронизацией), а файла на устройстве нет */
+.rr-dictrow.is-missing {
+  border-style: dashed;
+}
+
+.rr-dictrow.is-missing .rr-dictwords {
+  color: var(--text-error);
+}
+
 .rr-dictrow.is-drop {
   border-color: var(--interactive-accent);
   box-shadow: inset 0 2px 0 var(--interactive-accent);
@@ -794,8 +857,13 @@
   outline: none !important;
 }
 
+/* счётчик слов ужимается и обрезается: при «нет файла» и узком окне настроек
+   неужимаемая подпись растягивала строку и внизу вылезала горизонтальная прокрутка */
 .rr-dictwords {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   white-space: nowrap;
