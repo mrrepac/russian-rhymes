@@ -4816,6 +4816,9 @@ var RhymeDict = class {
     // во вкладке «Значение» (после Викисловаря). enabled — тумблер видимости в выдаче:
     // отключённый словарь остаётся в памяти и на диске, но не даёт групп значений.
     this.local = /* @__PURE__ */ new Map();
+    // id личных словарей, чей файл на месте, но не распаковался: удалять такое нельзя,
+    // а показывать число слов из настроек — врать, будто словарь работает
+    this.localBad = /* @__PURE__ */ new Set();
     this.manifest = [];
     this.localOrder = [];
     this.loading = null;
@@ -4837,9 +4840,17 @@ var RhymeDict = class {
     return this.loading;
   }
   readGz(name) {
-    return this.readGzPath((0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}`));
+    // файл основного словаря качается заново по кнопке, поэтому битый можно снести
+    return this.readGzPath((0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}`), true);
   }
-  async readGzPath(path) {
+  /**
+   * Прочитать .gz. dropIfCorrupt — сносить ли файл, который не распаковался; так можно
+   * поступать только с файлами основного словаря. Личный словарь ниоткуда не качается:
+   * его собирают из .dsl минутами, а папка с ним едет синхронизацией — удаление уехало бы
+   * и на второе устройство. Поэтому битый личный словарь остаётся лежать, а плагин о нём
+   * говорит вслух (localBad).
+   */
+  async readGzPath(path, dropIfCorrupt = false) {
     const name = path.slice(path.lastIndexOf("/") + 1);
     const adapter = this.app.vault.adapter;
     if (!await adapter.exists(path))
@@ -4848,6 +4859,10 @@ var RhymeDict = class {
     try {
       return new TextDecoder("utf-8").decode(ungzip_1(new Uint8Array(buf)));
     } catch (e) {
+      if (!dropIfCorrupt) {
+        console.error(`Russian Rhymes: corrupt file ${name}, left in place`, e);
+        return null;
+      }
       console.error(`Russian Rhymes: corrupt shard ${name}, removing`, e);
       try {
         await adapter.remove(path);
@@ -4901,12 +4916,15 @@ var RhymeDict = class {
     if (genRaw !== null)
       this.gen = this.parseGenerator(genRaw);
     await this.relocateLocalDicts("");
+    this.localBad.clear();
     for (const d of this.manifest) {
       let raw = await this.readGzPath(this.localFilePath(d.id));
       if (raw === null && this.localDir)
         raw = await this.readGzPath(this.legacyLocalPath(d.id));
       if (raw !== null)
         this.local.set(d.id, { name: d.name, idx: buildIndex(raw), enabled: d.enabled, kind: d.kind });
+      else if (await this.localFileExists(d.id))
+        this.localBad.add(d.id);
     }
     this.status = "ready";
   }
@@ -4925,6 +4943,10 @@ var RhymeDict = class {
   /** Прежнее место — внутри папки плагина. */
   legacyLocalPath(id) {
     return (0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/local-${id}.txt.gz`);
+  }
+  /** Файл словаря лежит на месте, но не читается — его надо ввозить из .dsl заново. */
+  isLocalBroken(id) {
+    return this.localBad.has(id);
   }
   /** Есть ли файл словаря на этом устройстве (список-то приезжает синхронизацией). */
   async localFileExists(id) {
@@ -5121,6 +5143,7 @@ var RhymeDict = class {
     const gz = gzip_1(raw);
     await adapter.writeBinary(this.localFilePath(id), gz.buffer.slice(gz.byteOffset, gz.byteOffset + gz.byteLength));
     this.local.set(id, { name, idx: buildIndex(raw), enabled: true, kind: kind === "syns" ? "syns" : "defs" });
+    this.localBad.delete(id);
     if (!this.localOrder.includes(id))
       this.localOrder.push(id);
     return entries.size;
@@ -5133,11 +5156,8 @@ var RhymeDict = class {
         await adapter.remove(path);
     }
     this.local.delete(id);
+    this.localBad.delete(id);
     this.localOrder = this.localOrder.filter((x) => x !== id);
-  }
-  /** Переставить порядок личных словарей (без переписи файлов). */
-  setOrder(ids) {
-    this.localOrder = ids.slice();
   }
   /** Переименовать личный словарь (имя — подпись группы во вкладке «Значение»). */
   renameDict(id, name) {
@@ -5734,6 +5754,9 @@ var en = {
   locHideDirDesc: "The folder has to live in the vault so that sync carries it, but it is a service folder — .gz files cannot be opened and never show up in search, graph or the quick switcher anyway. Turn this off to see it in the file tree.",
   locNoFile: "no file",
   locNoFileHint: "The dictionary is listed but its file is missing on this device — the list travels with sync, the files live in the vault folder.",
+  locBadFile: "corrupt file",
+  locBadFileHint: "The file is here but cannot be unpacked. The plugin does not delete it \u2014 the folder travels with sync, so the deletion would travel too. Import the .dsl again to replace it.",
+  noticeBadDicts: "Personal dictionaries that cannot be read: ",
   locKindHint: "Dragging between the lists does not change the kind: explanatory and synonyms dictionaries are stored differently. Remove it and add the .dsl again to the other list.",
   locMoved: "Dictionaries moved: ",
   locMoveFail: "Could not move the dictionaries \u2014 check the folder name",
@@ -5860,6 +5883,9 @@ var ru = {
   locHideDirDesc: "\u041F\u0430\u043F\u043A\u0435 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u0441\u044F \u043B\u0435\u0436\u0430\u0442\u044C \u0432 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0435, \u0438\u043D\u0430\u0447\u0435 \u0435\u0451 \u043D\u0435 \u043D\u043E\u0441\u0438\u0442 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F, \u043D\u043E \u043E\u043D\u0430 \u0441\u043B\u0443\u0436\u0435\u0431\u043D\u0430\u044F: .gz \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0442\u044C, \u0432 \u043F\u043E\u0438\u0441\u043A, \u0433\u0440\u0430\u0444 \u0438 \u0431\u044B\u0441\u0442\u0440\u043E\u0435 \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435 \u0442\u0430\u043A\u0438\u0435 \u0444\u0430\u0439\u043B\u044B \u0438 \u0442\u0430\u043A \u043D\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u044E\u0442. \u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u0432 \u0434\u0435\u0440\u0435\u0432\u0435 \u0444\u0430\u0439\u043B\u043E\u0432.",
   locNoFile: "\u043D\u0435\u0442 \u0444\u0430\u0439\u043B\u0430",
   locNoFileHint: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0435\u0441\u0442\u044C \u0432 \u0441\u043F\u0438\u0441\u043A\u0435, \u043D\u043E \u0444\u0430\u0439\u043B\u0430 \u043D\u0430 \u044D\u0442\u043E\u043C \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0435 \u043D\u0435\u0442 \u2014 \u0441\u043F\u0438\u0441\u043E\u043A \u0435\u0437\u0434\u0438\u0442 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u0435\u0439, \u0444\u0430\u0439\u043B\u044B \u043B\u0435\u0436\u0430\u0442 \u0432 \u043F\u0430\u043F\u043A\u0435 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0430.",
+  locBadFile: "\u0444\u0430\u0439\u043B \u043F\u043E\u0432\u0440\u0435\u0436\u0434\u0451\u043D",
+  locBadFileHint: "\u0424\u0430\u0439\u043B \u043D\u0430 \u043C\u0435\u0441\u0442\u0435, \u043D\u043E \u043D\u0435 \u0440\u0430\u0441\u043F\u0430\u043A\u043E\u0432\u044B\u0432\u0430\u0435\u0442\u0441\u044F. \u041F\u043B\u0430\u0433\u0438\u043D \u0435\u0433\u043E \u043D\u0435 \u0443\u0434\u0430\u043B\u044F\u0435\u0442 \u2014 \u043F\u0430\u043F\u043A\u0443 \u043D\u043E\u0441\u0438\u0442 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F, \u0438 \u0443\u0434\u0430\u043B\u0435\u043D\u0438\u0435 \u0443\u0435\u0445\u0430\u043B\u043E \u0431\u044B \u043D\u0430 \u0432\u0442\u043E\u0440\u043E\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E. \u0412\u0432\u0435\u0437\u0438\u0442\u0435 .dsl \u0437\u0430\u043D\u043E\u0432\u043E, \u0447\u0442\u043E\u0431\u044B \u0437\u0430\u043C\u0435\u043D\u0438\u0442\u044C.",
+  noticeBadDicts: "\u041D\u0435 \u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F \u043B\u0438\u0447\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u0438: ",
   locKindHint: "\u041F\u0435\u0440\u0435\u0442\u0430\u0441\u043A\u0438\u0432\u0430\u043D\u0438\u0435\u043C \u0432\u0438\u0434 \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u0441\u043C\u0435\u043D\u0438\u0442\u044C: \u0442\u043E\u043B\u043A\u043E\u0432\u044B\u0435 \u0438 \u0441\u0438\u043D\u043E\u043D\u0438\u043C\u0438\u0447\u0435\u0441\u043A\u0438\u0435 \u0445\u0440\u0430\u043D\u044F\u0442\u0441\u044F \u043F\u043E-\u0440\u0430\u0437\u043D\u043E\u043C\u0443. \u0423\u0434\u0430\u043B\u0438\u0442\u0435 \u0435\u0433\u043E \u0438 \u0434\u043E\u0431\u0430\u0432\u044C\u0442\u0435 .dsl \u0437\u0430\u043D\u043E\u0432\u043E \u0432 \u043D\u0443\u0436\u043D\u044B\u0439 \u0441\u043F\u0438\u0441\u043E\u043A.",
   locMoved: "\u041F\u0435\u0440\u0435\u043D\u0435\u0441\u0435\u043D\u043E \u0441\u043B\u043E\u0432\u0430\u0440\u0435\u0439: ",
   locMoveFail: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u0441\u043B\u043E\u0432\u0430\u0440\u0438 \u2014 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0438\u043C\u044F \u043F\u0430\u043F\u043A\u0438",
@@ -6100,6 +6126,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (dict.status !== "ready") {
       this.renderStatus(t("dictLoading"));
       await dict.load();
+      // на телефоне словарь грузится только отсюда — и про сломанные личные тоже узнаём тут
+      this.plugin.warnBadDicts();
     }
     if (dict.status === "missing" || dict.status === "error") {
       this.renderMissing();
@@ -7430,6 +7458,8 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     // что панель уже показала по редактору; пока это не изменилось, слежение молчит и не
     // перебивает слово, выбранное вручную (двойной клик по чипу, двойной Ctrl+C, поле поиска)
     this.lastFollowKey = "";
+    // о каких сломанных личных словарях уже сказали (чтобы не повторяться на каждой загрузке)
+    this.badWarned = "";
   }
   async onload() {
     var _a;
@@ -7565,7 +7595,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       void this.syncDictDirCase().then(() => this.applyDictDirStyle());
       void this.ensureViewInSidebar(false);
       if (!import_obsidian4.Platform.isMobile)
-        void this.dict.load();
+        void this.dict.load().then(() => this.warnBadDicts());
     });
   }
   async loadSettings() {
@@ -7593,6 +7623,20 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
    */
   syncLocalManifest() {
     this.dict.setLocalManifest(this.localDicts);
+  }
+  /**
+   * Сказать про личные словари, которые лежат на месте, но не читаются. Такой файл плагин
+   * не удаляет — его папку носит синхронизация, и удаление уехало бы на второе устройство,
+   * — поэтому без предупреждения о поломке можно было бы узнать только по пустой выдаче.
+   * Повторяем ровно тогда, когда набор сломанных словарей изменился.
+   */
+  warnBadDicts() {
+    const bad = this.localDicts.filter((d) => this.dict.isLocalBroken(d.id)).map((d) => d.name);
+    const key = bad.join(", ");
+    if (!bad.length || key === this.badWarned)
+      return;
+    this.badWarned = key;
+    new import_obsidian4.Notice(t("noticeBadDicts") + key, 1e4);
   }
   async saveSettings() {
     const data = { settings: this.settings, userStress: this.userStress, localDicts: this.localDicts };
@@ -7914,18 +7958,26 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         d.name = nameInput.value.trim() || d.name;
         nameInput.value = d.name;
         this.plugin.dict.renameDict(d.id, d.name);
+        this.plugin.syncLocalManifest();
         void this.plugin.saveSettings();
         this.plugin.refreshPanel();
       });
       const wordsEl = row.createSpan({ cls: "rr-dictwords", text: `${d.words}${t("locWords")}` });
-      // список словарей приезжает синхронизацией, а файлы — нет; честно говорим, чего тут нет
-      void this.plugin.dict.localFileExists(d.id).then((ok) => {
-        if (ok)
-          return;
+      // список словарей приезжает синхронизацией, а файлы — нет; честно говорим, чего тут нет.
+      // файл может и лежать, но не распаковываться — тогда число слов из настроек соврало бы
+      if (this.plugin.dict.isLocalBroken(d.id)) {
         row.addClass("is-missing");
-        wordsEl.setText(t("locNoFile"));
-        wordsEl.title = t("locNoFileHint");
-      });
+        wordsEl.setText(t("locBadFile"));
+        wordsEl.title = t("locBadFileHint");
+      } else {
+        void this.plugin.dict.localFileExists(d.id).then((ok) => {
+          if (ok)
+            return;
+          row.addClass("is-missing");
+          wordsEl.setText(t("locNoFile"));
+          wordsEl.title = t("locNoFileHint");
+        });
+      }
       const toggle = new import_obsidian4.ToggleComponent(row);
       toggle.toggleEl.addClass("rr-dicttoggle");
       toggle.setTooltip(t("locToggleHint"));
@@ -7941,6 +7993,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       del.addEventListener("click", async () => {
         await this.plugin.dict.deleteDict(d.id);
         this.plugin.localDicts = this.plugin.localDicts.filter((x) => x.id !== d.id);
+        this.plugin.syncLocalManifest();
         await this.plugin.saveSettings();
         this.plugin.refreshPanel();
         this.display();
@@ -7998,7 +8051,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     ids.splice(fi < ti0 ? ti + 1 : ti, 0, fromId);
     const byId = new Map(this.plugin.localDicts.map((d) => [d.id, d]));
     this.plugin.localDicts = ids.map((id) => byId.get(id)).filter((d) => !!d);
-    this.plugin.dict.setOrder(ids);
+    this.plugin.syncLocalManifest();
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
     this.display();
@@ -8017,6 +8070,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         const name = conv.name && conv.name !== "DSL" ? conv.name : base;
         const words = await this.plugin.dict.importDict(id, name, conv.entries, kind);
         this.plugin.localDicts.push({ id, name, words, enabled: true, kind: kind === "syns" ? "syns" : "defs" });
+        this.plugin.syncLocalManifest();
         await this.plugin.saveSettings();
         ok++;
       } catch (e) {
