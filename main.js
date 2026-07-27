@@ -5081,10 +5081,6 @@ var RhymeDict = class {
     }
     return g;
   }
-  /** Есть ли пулы сущ/гл/прил для генератора (перс есть всегда — хардкод). */
-  hasGeneratorPools() {
-    return !!this.gen;
-  }
   /** Объединённый пул слов для генератора по выбранным категориям и слоям (без повторов).
    * Перемешивание и «мешок без повторов» — на стороне view. */
   generatorPool(cats, tiers) {
@@ -5125,11 +5121,6 @@ var RhymeDict = class {
     const m = this.manifest.find((x) => x.id === id);
     if (m)
       m.enabled = enabled;
-  }
-  /** Число слов в личном словаре по id (0, если ещё не загружен). */
-  localWords(id) {
-    var _a, _b;
-    return (_b = (_a = this.local.get(id)) == null ? void 0 : _a.idx.offsets.length) != null ? _b : 0;
   }
   /** Добавить/заменить личный словарь: записать файл, построить индекс, встать в конец порядка. */
   async importDict(id, name, entries, kind) {
@@ -5655,7 +5646,6 @@ var import_obsidian2 = require("obsidian");
 var en = {
   panelTitle: "Russian Rhymes",
   searchPlaceholder: "double Ctrl+C on a word",
-  notFound: "Word not found in the dictionary",
   dictMissing: "Dictionary files not found. Tap the button below to download them (~72 MB).",
   dictLoading: "Loading dictionary\u2026",
   dlHeading: "Dictionary download",
@@ -5709,7 +5699,6 @@ var en = {
   lexFreq: "frequent",
   lexCommon: "common",
   lexRare: "rare",
-  lexHint: "Lexicon layers to show \u2014 the choice is remembered",
   tabNear: "near",
   tabConson: "slant",
   tabAsson: "assonance",
@@ -5740,8 +5729,6 @@ var en = {
   copyHint: "Click \u2014 copy",
   settingDouble: "Double Ctrl+C lookup",
   settingDoubleDesc: "Press Ctrl+C twice quickly on a selected word to look it up. Set to 0 to disable.",
-  settingDoubleMs: "Double-press window (ms)",
-  settingPage: "Results per page",
   locHeading: "Personal dictionaries (DSL)",
   locDefs: "Explanatory dictionaries",
   locSyns: "Synonyms dictionaries",
@@ -5762,7 +5749,6 @@ var en = {
   locMoveFail: "Could not move the dictionaries \u2014 check the folder name",
   locReorderHint: "drag by the handle to reorder \u2014 this is the order shown in the Meaning tab, after Wiktionary",
   locToggleHint: "Show this dictionary in the Meaning tab \u2014 turn off to hide it without deleting the file",
-  locTotal: "total ",
   btnAddDsl: "Add .dsl",
   btnClear: "Remove",
   noticeConverting: "Converting dictionary\u2026",
@@ -5784,7 +5770,6 @@ var en = {
 var ru = {
   panelTitle: "\u0420\u0438\u0444\u043C\u044B",
   searchPlaceholder: "\u0434\u0432\u0430\u0436\u0434\u044B Ctrl+C \u043D\u0430 \u0441\u043B\u043E\u0432\u0435",
-  notFound: "\u0421\u043B\u043E\u0432\u0430 \u043D\u0435\u0442 \u0432 \u0441\u043B\u043E\u0432\u0430\u0440\u0435",
   dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~72 \u041C\u0411).",
   dictLoading: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F\u2026",
   dlHeading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
@@ -5838,7 +5823,6 @@ var ru = {
   lexFreq: "\u0447\u0430\u0441\u0442\u043E\u0442\u043D\u0430\u044F",
   lexCommon: "\u043E\u0431\u044B\u0447\u043D\u0430\u044F",
   lexRare: "\u0440\u0435\u0434\u043A\u0430\u044F",
-  lexHint: "\u0421\u043B\u043E\u0438 \u043B\u0435\u043A\u0441\u0438\u043A\u0438 \u0432 \u0432\u044B\u0434\u0430\u0447\u0435 \u2014 \u0432\u044B\u0431\u043E\u0440 \u0437\u0430\u043F\u043E\u043C\u0438\u043D\u0430\u0435\u0442\u0441\u044F",
   tabNear: "\u0431\u043B\u0438\u0437\u043A\u0438\u0435",
   tabConson: "\u0441\u043E\u0437\u0432\u0443\u0447\u0438\u044F",
   tabAsson: "\u0430\u0441\u0441\u043E\u043D\u0430\u043D\u0441\u044B",
@@ -5869,8 +5853,6 @@ var ru = {
   copyHint: "\u041A\u043B\u0438\u043A \u2014 \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C",
   settingDouble: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0434\u0432\u043E\u0439\u043D\u043E\u043C\u0443 Ctrl+C",
   settingDoubleDesc: "\u0414\u0432\u0430\u0436\u0434\u044B \u0431\u044B\u0441\u0442\u0440\u043E \u043D\u0430\u0436\u043C\u0438\u0442\u0435 Ctrl+C \u043D\u0430 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u043E\u043C \u0441\u043B\u043E\u0432\u0435, \u0447\u0442\u043E\u0431\u044B \u043D\u0430\u0439\u0442\u0438 \u0435\u0433\u043E. 0 \u2014 \u0432\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C.",
-  settingDoubleMs: "\u041E\u043A\u043D\u043E \u0434\u0432\u043E\u0439\u043D\u043E\u0433\u043E \u043D\u0430\u0436\u0430\u0442\u0438\u044F (\u043C\u0441)",
-  settingPage: "\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442\u043E\u0432 \u043D\u0430 \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443",
   locHeading: "\u041B\u0438\u0447\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u0438 (DSL)",
   locDefs: "\u0422\u043E\u043B\u043A\u043E\u0432\u044B\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u0438",
   locSyns: "\u0421\u043B\u043E\u0432\u0430\u0440\u0438 \u0441\u0438\u043D\u043E\u043D\u0438\u043C\u043E\u0432",
@@ -5891,7 +5873,6 @@ var ru = {
   locMoveFail: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u0441\u043B\u043E\u0432\u0430\u0440\u0438 \u2014 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0438\u043C\u044F \u043F\u0430\u043F\u043A\u0438",
   locReorderHint: "\u043F\u0435\u0440\u0435\u0442\u0430\u0441\u043A\u0438\u0432\u0430\u0439\u0442\u0435 \u0437\u0430 \u0440\u0443\u0447\u043A\u0443 \u2014 \u0432 \u044D\u0442\u043E\u043C \u043F\u043E\u0440\u044F\u0434\u043A\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u0438 \u0438\u0434\u0443\u0442 \u0432 \xAB\u0417\u043D\u0430\u0447\u0435\u043D\u0438\u0438\xBB, \u043F\u043E\u0441\u043B\u0435 \u0412\u0438\u043A\u0438\u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   locToggleHint: "\u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C \u0432 \xAB\u0417\u043D\u0430\u0447\u0435\u043D\u0438\u0438\xBB \u2014 \u0432\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0440\u044B\u0442\u044C, \u043D\u0435 \u0443\u0434\u0430\u043B\u044F\u044F \u0444\u0430\u0439\u043B",
-  locTotal: "\u0432\u0441\u0435\u0433\u043E ",
   btnAddDsl: "\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C .dsl",
   btnClear: "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C",
   noticeConverting: "\u041A\u043E\u043D\u0432\u0435\u0440\u0442\u0438\u0440\u0443\u044E \u0441\u043B\u043E\u0432\u0430\u0440\u044C\u2026",
