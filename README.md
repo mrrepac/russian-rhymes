@@ -13,6 +13,7 @@ An **offline Russian rhyming dictionary** for [Obsidian](https://obsidian.md): r
 - **Associations tab** — synonyms, antonyms, hypernyms/hyponyms, related words, set phrases, proverbs, associations, metagrams and anagrams, each in a collapsible section.
 - **"By meaning" filter** — highlight or isolate rhymes that are also related in meaning.
 - **Fully offline** — after a one-time dictionary download, everything works with no network.
+- **Light on memory** — the two largest parts of the dictionary (definitions and word forms, ~360 MB of text) are read from disk in compressed blocks instead of being held in RAM: a lookup touches tens of kilobytes and only a ~50 KB index stays resident. You also choose what is preloaded at startup — nothing, rhymes, or rhymes and meanings.
 - **Personal dictionaries** — import your own Lingvo/GoldenDict `.dsl` / `.dsl.dz` files and reorder them.
 - **Works on mobile and desktop.**
 
@@ -34,6 +35,12 @@ Obsidian installs only the plugin code (`main.js`, `manifest.json`, `styles.css`
 - The download URL is configurable in Settings if you want to self-host the dictionary.
 
 The download is a manual, explicit step so it never eats mobile data or storage without your consent.
+
+Since 2.0.0 the two biggest shards ship as `*.blk.gz` — a gzip file made of independent ~64 KB
+members — next to a small `*.blkidx.gz` listing the first key and byte offset of every block. The
+plugin fetches a single block with an HTTP `Range` request and inflates only that. Where ranged
+reads are unavailable the file is simply read whole, exactly as before: `*.blk.gz` is still an
+ordinary gzip archive.
 
 ## Installation
 
@@ -60,7 +67,7 @@ copy it (together with `manifest.json` and `styles.css`) into
 
 The headless test suite and the scripts that compile the dictionary from the sources above are
 kept outside this repository. `dict/` is not committed either — the data is published under the
-`dict` tag and downloaded by the plugin on first use. Pushing a version tag (`1.9.2`) publishes a
+`dict` tag and downloaded by the plugin on first use. Pushing a version tag (`2.0.0`) publishes a
 release with the three plugin files.
 
 ## License

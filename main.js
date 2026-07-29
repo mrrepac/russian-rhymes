@@ -4750,6 +4750,11 @@ var DEF_GS = "";
 var DEF_US = "";
 var DEF_RS = "";
 var DEF_FS = "";
+// сколько распакованных блоков держим про запас: блок ~64 тыс. знаков, шесть штук —
+// меньше мегабайта, и подряд идущие слова обычно попадают в уже прочитанный
+var BLOCK_CACHE = 6;
+// шарды второй волны: формы и толкования, 360 МБ из ~500 МБ всего словаря
+var HEAVY_SHARDS = ["forms", "definitions"];
 function buildIndex(text) {
   let count = 1;
   for (let i = 0; i < text.length; i++)
@@ -4822,6 +4827,16 @@ var RhymeDict = class {
     this.manifest = [];
     this.localOrder = [];
     this.loading = null;
+    // вторая волна: formsIdx и defs держат ~360 МБ из ~500 МБ всего словаря (кириллица
+    // в строке V8 — 2 байта на символ), а нужны только во вкладке «Значение». Грузятся
+    // при первом её открытии, иначе телефон не пережил бы старт.
+    this.heavyStatus = "idle";
+    this.loadingHeavy = null;
+    // блочные шарды: <шард>.blk.gz — склеенные независимые gzip-члены, <шард>.blkidx.gz —
+    // первый ключ и смещение каждого блока. В памяти только индекс (десятки КБ), сам блок
+    // тянется Range-запросом по требованию. Пусто — читаем шард по-старому, целиком.
+    this.blocks = /* @__PURE__ */ new Map();
+    this.blockCache = /* @__PURE__ */ new Map();
     // предпосчёт для assonancesFor: гласный скелет каждого рифм-ключа и позиция таба
     // (конца ключа). Строится лениво один раз; иначе vowelSkeleton пересчитывался бы
     // по ~120k ключей на КАЖДЫЙ показ слова и клик по гласной — фриз главного потока.
@@ -4838,6 +4853,154 @@ var RhymeDict = class {
       console.error("Russian Rhymes: dictionary load failed", e);
     });
     return this.loading;
+  }
+  /**
+   * Приехала ли вторая волна. Блочный шард ждать не надо: его индекс приезжает с первой
+   * волной, а сами данные читаются с диска по кускам.
+   */
+  heavyReady() {
+    return this.heavyStatus === "ready" || this.hasBlocks("forms") && this.hasBlocks("definitions");
+  }
+  /** Читается ли шард блоками с диска (вместо загрузки целиком в память). */
+  hasBlocks(name) {
+    return this.blocks.has(name);
+  }
+  /**
+   * Загрузить индекс блоков шарда и убедиться, что Range-чтение тут работает: без него
+   * пришёл бы весь файл целиком, что как раз и надо избежать. Не получилось — шард
+   * останется на старом пути (грузится в память), поэтому молча выходим.
+   */
+  async loadBlockIndex(name) {
+    const raw = await this.readGzPath((0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}.blkidx.gz`));
+    if (raw === null)
+      return;
+    const keys = [];
+    const offsets = [];
+    const lengths = [];
+    for (const line of raw.split("\n")) {
+      if (!line)
+        continue;
+      const a = line.indexOf("	");
+      const b = line.indexOf("	", a + 1);
+      if (a < 0 || b < 0)
+        continue;
+      keys.push(line.slice(0, a));
+      offsets.push(+line.slice(a + 1, b));
+      lengths.push(+line.slice(b + 1));
+    }
+    if (keys.length === 0)
+      return;
+    this.blocks.set(name, { keys, offsets, lengths });
+    // проверяем на самом первом блоке: если Range не поддержан, придёт файл целиком
+    const probe = await this.readRange(name, 0);
+    if (probe === null) {
+      this.blocks.delete(name);
+      console.warn(`Russian Rhymes: ${name}.blk.gz — чтение по Range недоступно, читаю шард целиком`);
+    }
+  }
+  /** Сжатый кусок блока i — Range-запросом по ресурсному URL файла. */
+  async readRange(name, i) {
+    const bi = this.blocks.get(name);
+    if (!bi)
+      return null;
+    const adapter = this.app.vault.adapter;
+    if (typeof adapter.getResourcePath !== "function")
+      return null;
+    const path = (0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}.blk.gz`);
+    const from = bi.offsets[i], len = bi.lengths[i];
+    try {
+      const resp = await fetch(adapter.getResourcePath(path), {
+        headers: { Range: `bytes=${from}-${from + len - 1}` }
+      });
+      const buf = await resp.arrayBuffer();
+      // пришло не ровно столько, сколько просили — Range проигнорирован, блоками нельзя
+      return buf.byteLength === len ? buf : null;
+    } catch (e) {
+      console.error(`Russian Rhymes: Range-чтение ${name} не удалось`, e);
+      return null;
+    }
+  }
+  /** Распакованный текст блока i, с кэшем на несколько последних. */
+  async blockText(name, i) {
+    const ck = name + ":" + i;
+    const hit = this.blockCache.get(ck);
+    if (hit !== void 0)
+      return hit;
+    const buf = await this.readRange(name, i);
+    if (buf === null)
+      return null;
+    let text;
+    try {
+      text = new TextDecoder("utf-8").decode(ungzip_1(new Uint8Array(buf)));
+    } catch (e) {
+      console.error(`Russian Rhymes: блок ${ck} не распаковался`, e);
+      return null;
+    }
+    this.blockCache.set(ck, text);
+    // соседние слова часто попадают в один блок, но держать их все — снова та же память
+    if (this.blockCache.size > BLOCK_CACHE)
+      this.blockCache.delete(this.blockCache.keys().next().value);
+    return text;
+  }
+  /** Строка блочного шарда: находим нужный блок по индексу и ищем строку уже в нём. */
+  async blockLine(name, prefix) {
+    const bi = this.blocks.get(name);
+    if (!bi)
+      return null;
+    // последний блок, чей первый ключ не больше искомого
+    let lo = 0, hi = bi.keys.length - 1, found = -1;
+    while (lo <= hi) {
+      const mid = lo + hi >> 1;
+      if (bi.keys[mid] <= prefix) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (found < 0)
+      return null;
+    const text = await this.blockText(name, found);
+    return text === null ? null : findLine(buildIndex(text), prefix);
+  }
+  /** Строка шарда: из памяти, если он загружен целиком, иначе с диска по блокам. */
+  async shardLine(name, idx, prefix) {
+    return idx ? findLine(idx, prefix) : this.blockLine(name, prefix);
+  }
+  /** Загрузка второй волны; повторные вызовы ждут один и тот же промис. */
+  loadHeavy() {
+    if (this.loadingHeavy)
+      return this.loadingHeavy;
+    this.loadingHeavy = this.doLoadHeavy().catch((e) => {
+      this.heavyStatus = "error";
+      console.error("Russian Rhymes: heavy dictionary load failed", e);
+    });
+    return this.loadingHeavy;
+  }
+  async doLoadHeavy() {
+    await this.load();
+    if (this.status !== "ready") {
+      this.heavyStatus = "error";
+      return;
+    }
+    this.heavyStatus = "loading";
+    const heavy = [
+      ["forms", (i) => this.formsIdx = i],
+      ["definitions", (i) => this.defs = i]
+    ];
+    for (const [name, set] of heavy) {
+      // блочный шард в память не тянем — ради этого всё и затевалось
+      if (this.hasBlocks(name))
+        continue;
+      // .blk.gz — обычный gzip (склейка членов), читается целиком не хуже .txt.gz.
+      // Поэтому в релизе достаточно блочного файла: откат при отсутствии Range берёт его же
+      let raw = await this.readGz(name + ".txt.gz");
+      if (raw === null)
+        raw = await this.readGz(name + ".blk.gz");
+      if (raw !== null)
+        set(buildIndex(raw));
+    }
+    this.heavyStatus = "ready";
   }
   readGz(name) {
     // файл основного словаря качается заново по кнопке, поэтому битый можно снести
@@ -4883,6 +5046,12 @@ var RhymeDict = class {
     this.rhymes = buildIndex(rhymesRaw);
     this.rhymeSkel = null;
     this.rhymeKeyEnd = null;
+    // индексы блочных шардов крошечные, берём их сразу: если они есть, вторая волна
+    // этим шардам уже не нужна — читаем с диска
+    this.blocks.clear();
+    this.blockCache.clear();
+    for (const name of HEAVY_SHARDS)
+      await this.loadBlockIndex(name);
     const opt = [
       ["synonyms.txt.gz", (i) => this.syns = i],
       ["antonyms.txt.gz", (i) => this.ants = i],
@@ -4894,8 +5063,6 @@ var RhymeDict = class {
       ["proverbs.txt.gz", (i) => this.proverbs = i],
       ["metagrams.txt.gz", (i) => this.metagrams = i],
       ["anagrams.txt.gz", (i) => this.anagrams = i],
-      ["forms.txt.gz", (i) => this.formsIdx = i],
-      ["definitions.txt.gz", (i) => this.defs = i],
       ["lemmas.txt.gz", (i) => this.lemmas = i],
       ["phrases.txt.gz", (i) => this.phrasesIdx = i]
     ];
@@ -5006,7 +5173,8 @@ var RhymeDict = class {
       throw new Error("empty files.json");
     let done = 0;
     for (const f of files) {
-      if (!/^[\w-]+\.txt\.gz$/.test(f.name) || f.name.startsWith("local-"))
+      // .blk.gz — блочный шард, .blkidx.gz — его индекс; без них словарь не доедет до телефона
+      if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-"))
         continue;
       const path = (0, import_obsidian.normalizePath)(`${dir}/${f.name}`);
       if (await adapter.exists(path)) {
@@ -5054,6 +5222,13 @@ var RhymeDict = class {
   async reloadAfterDownload() {
     this.status = "idle";
     this.loading = null;
+    // вторую волну тоже перечитать: докачанные formsIdx/defs иначе остались бы пустыми
+    this.heavyStatus = "idle";
+    this.loadingHeavy = null;
+    this.formsIdx = null;
+    this.defs = null;
+    this.blocks.clear();
+    this.blockCache.clear();
     await this.load();
   }
   /** Разбор generator.txt.gz: секции «#n»/«#v»/«#a», строки «слово\tслой». */
@@ -5212,16 +5387,16 @@ var RhymeDict = class {
    * Статья толкового словаря по точному слову: сначала Викисловарь
    * (с form_of-редиректом), затем личные DSL в заданном пользователем порядке.
    */
-  defArticle(word) {
+  async defArticle(word) {
     const localGroups = this.localDefGroups(word);
     let lemma = word;
     let mainGroups = [];
     let etymology = "";
-    if (this.defs) {
-      let line = findLine(this.defs, lemma + "	");
+    if (this.defs || this.hasBlocks("definitions")) {
+      let line = await this.shardLine("definitions", this.defs, lemma + "	");
       if (line && line[lemma.length + 1] === ">") {
         lemma = line.slice(lemma.length + 2);
-        line = findLine(this.defs, lemma + "	");
+        line = await this.shardLine("definitions", this.defs, lemma + "	");
       }
       if (line) {
         const rec = line.slice(lemma.length + 1);
@@ -5248,8 +5423,8 @@ var RhymeDict = class {
    * («шнурки», «юмора»), берём статью леммы — иначе «Значение» показывало бы одни
    * личные словари, у которых форма нашлась как отдельное заглавное слово.
    */
-  definitionsFor(word) {
-    const own = this.defArticle(word);
+  async definitionsFor(word) {
+    const own = await this.defArticle(word);
     if (own && own.wiki.length > 0)
       return own;
     const names = [];
@@ -5257,7 +5432,7 @@ var RhymeDict = class {
     const wiki = [];
     let etymology = own ? own.etymology : void 0;
     for (const lm of this.lemmasOf(word).slice(0, 2)) {
-      const d = this.defArticle(lm);
+      const d = await this.defArticle(lm);
       if (d && !names.includes(d.lemma)) {
         names.push(d.lemma);
         groups.push(...d.groups);
@@ -5506,11 +5681,9 @@ var RhymeDict = class {
     return this.resolveStringList(this.proverbs, word, "|");
   }
   /** Парадигма словоформ с ударениями (Викисловарь); свои, иначе — у леммы формы. */
-  formsFor(word) {
-    const parse = (w) => {
-      if (!this.formsIdx)
-        return null;
-      const line = findLine(this.formsIdx, w + "	");
+  async formsFor(word) {
+    const parse = async (w) => {
+      const line = await this.shardLine("forms", this.formsIdx, w + "	");
       if (!line)
         return null;
       return line.slice(w.length + 1).split("|").map((e) => {
@@ -5518,11 +5691,11 @@ var RhymeDict = class {
         return { label: c >= 0 ? e.slice(0, c) : "", form: c >= 0 ? e.slice(c + 1) : e };
       });
     };
-    const own = parse(word);
+    const own = await parse(word);
     if (own)
       return { lemma: null, rows: own };
     for (const lm of this.lemmasOf(word).slice(0, 1)) {
-      const rows = parse(lm);
+      const rows = await parse(lm);
       if (rows)
         return { lemma: lm, rows };
     }
@@ -5648,6 +5821,8 @@ var en = {
   searchPlaceholder: "double Ctrl+C on a word",
   dictMissing: "Dictionary files not found. Tap the button below to download them (~72 MB).",
   dictLoading: "Loading dictionary\u2026",
+  defsLoading: "Loading meanings and word forms\u2026",
+  defsFailed: "Could not load meanings and word forms.",
   dlHeading: "Dictionary download",
   settingUrl: "Dictionary URL",
   settingUrlDesc: "Where to fetch the dictionary from when the dict/ folder is missing (e.g. on mobile). GitHub release base URL.",
@@ -5765,13 +5940,20 @@ var en = {
   followOn: "Following the cursor",
   followOff: "No longer following the cursor",
   settingFollow: "Follow the cursor",
-  settingFollowDesc: "While you type, the panel shows rhymes for the last word of the current line (or for the selection). It refreshes when you pause; words the dictionary does not know are skipped, so the list does not flicker."
+  settingFollowDesc: "While you type, the panel shows rhymes for the last word of the current line (or for the selection). It refreshes when you pause; words the dictionary does not know are skipped, so the list does not flicker.",
+  settingStartup: "Load at startup",
+  settingStartupDesc: "The whole dictionary takes about 500 MB of memory, 360 MB of which are meanings and word forms. Anything not preloaded is fetched on first use. Loading less takes effect after the next restart.",
+  startupNone: "Nothing",
+  startupRhymes: "Rhymes (~140 MB)",
+  startupFull: "Rhymes and meanings (~500 MB)",
 };
 var ru = {
   panelTitle: "\u0420\u0438\u0444\u043C\u044B",
   searchPlaceholder: "\u0434\u0432\u0430\u0436\u0434\u044B Ctrl+C \u043D\u0430 \u0441\u043B\u043E\u0432\u0435",
   dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~72 \u041C\u0411).",
   dictLoading: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F\u2026",
+  defsLoading: "\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u044E\u0442\u0441\u044F \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430\u2026",
+  defsFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430.",
   dlHeading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   settingUrl: "\u0410\u0434\u0440\u0435\u0441 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   settingUrlDesc: "\u041E\u0442\u043A\u0443\u0434\u0430 \u0441\u043A\u0430\u0447\u0438\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C, \u0435\u0441\u043B\u0438 \u043F\u0430\u043F\u043A\u0438 dict/ \u043D\u0435\u0442 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u043D\u0430 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0435). \u0411\u0430\u0437\u0430 URL GitHub-\u0440\u0435\u043B\u0438\u0437\u0430.",
@@ -5889,7 +6071,12 @@ var ru = {
   followOn: "\u0421\u043B\u0435\u0434\u0443\u044E \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C",
   followOff: "\u0411\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u0441\u043B\u0435\u0436\u0443 \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C",
   settingFollow: "\u0421\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C",
-  settingFollowDesc: "\u041F\u043E\u043A\u0430 \u0432\u044B \u043F\u0438\u0448\u0435\u0442\u0435, \u043F\u0430\u043D\u0435\u043B\u044C \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u0440\u0438\u0444\u043C\u044B \u043A \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0441\u043B\u043E\u0432\u0443 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u043E\u043A\u0438 (\u0438\u043B\u0438 \u043A \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044E). \u041E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0432 \u043F\u0430\u0443\u0437\u0430\u0445 \u043D\u0430\u0431\u043E\u0440\u0430; \u0441\u043B\u043E\u0432\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043D\u0435\u0442 \u0432 \u0441\u043B\u043E\u0432\u0430\u0440\u0435, \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F \u2014 \u0432\u044B\u0434\u0430\u0447\u0430 \u043D\u0435 \u043C\u0438\u0433\u0430\u0435\u0442."
+  settingFollowDesc: "\u041F\u043E\u043A\u0430 \u0432\u044B \u043F\u0438\u0448\u0435\u0442\u0435, \u043F\u0430\u043D\u0435\u043B\u044C \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u0440\u0438\u0444\u043C\u044B \u043A \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0441\u043B\u043E\u0432\u0443 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u043E\u043A\u0438 (\u0438\u043B\u0438 \u043A \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044E). \u041E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0432 \u043F\u0430\u0443\u0437\u0430\u0445 \u043D\u0430\u0431\u043E\u0440\u0430; \u0441\u043B\u043E\u0432\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043D\u0435\u0442 \u0432 \u0441\u043B\u043E\u0432\u0430\u0440\u0435, \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F \u2014 \u0432\u044B\u0434\u0430\u0447\u0430 \u043D\u0435 \u043C\u0438\u0433\u0430\u0435\u0442.",
+  settingStartup: "\u0427\u0442\u043E \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0442\u044C \u043F\u0440\u0438 \u0441\u0442\u0430\u0440\u0442\u0435",
+  settingStartupDesc: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0446\u0435\u043B\u0438\u043A\u043E\u043C \u0437\u0430\u043D\u0438\u043C\u0430\u0435\u0442 \u043E\u043A\u043E\u043B\u043E 500 \u041C\u0411 \u043F\u0430\u043C\u044F\u0442\u0438, \u0438\u0437 \u043D\u0438\u0445 360 \u041C\u0411 \u2014 \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430. \u041D\u0435\u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043D\u043E\u0435 \u043F\u043E\u0434\u0442\u044F\u043D\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0435\u0440\u0432\u043E\u043C \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0438. \u0423\u043C\u0435\u043D\u044C\u0448\u0435\u043D\u0438\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 \u0441\u043E \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0437\u0430\u043F\u0443\u0441\u043A\u0430.",
+  startupNone: "\u041D\u0438\u0447\u0435\u0433\u043E",
+  startupRhymes: "\u0420\u0438\u0444\u043C\u044B (~140 \u041C\u0411)",
+  startupFull: "\u0420\u0438\u0444\u043C\u044B \u0438 \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u044F (~500 \u041C\u0411)",
 };
 function t(key) {
   const lang = import_obsidian2.moment.locale();
@@ -5913,6 +6100,9 @@ var PAGE_MORE = 200;
 // допустимые значения запоминаемых фильтров — data.json правят и руками
 var POS_KEYS = ["", "n", "v", "a", "d", "i"];
 var KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
+// что грузить при старте: ничего / первую волну / обе. Толкования и формы — 360 МБ
+// из ~500 МБ всего словаря, поэтому выбор заметно меняет цену запуска
+var STARTUP_KEYS = ["none", "rhymes", "full"];
 // вставка слова в заметку: Alt+клик на десктопе, долгое нажатие на телефоне
 var LONG_PRESS_MS = 500;
 var LONG_PRESS_SLOP = 10;
@@ -6107,7 +6297,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (dict.status !== "ready") {
       this.renderStatus(t("dictLoading"));
       await dict.load();
-      // на телефоне словарь грузится только отсюда — и про сломанные личные тоже узнаём тут
+      // сюда попадаем, если слово запросили раньше, чем догрузилась первая волна;
+      // про сломанные личные словари узнаём тут же
       this.plugin.warnBadDicts();
     }
     if (dict.status === "missing" || dict.status === "error") {
@@ -6143,8 +6334,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.associations = dict.associationsFor(this.word);
     this.metagrams = dict.metagramsFor(this.word);
     this.anagrams = dict.anagramsFor(this.word);
-    this.definitions = dict.definitionsFor(this.word);
-    this.forms = dict.formsFor(this.word);
+    this.definitions = await dict.definitionsFor(this.word);
+    this.forms = await dict.formsFor(this.word);
     this.phrases = dict.phrasesFor(this.word);
     this.idioms = dict.idiomsFor(this.word);
     this.proverbs = dict.proverbsFor(this.word);
@@ -6278,7 +6469,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
     } else if (this.all.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
       list.push("rhymes");
     }
-    if (this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0)
+    // пока вторая волна не приехала, про формы и толкования ничего не известно — вкладку
+    // держим доступной, иначе до неё нельзя было бы дотянуться, чтобы её же и загрузить
+    if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0)
       list.push("meaning");
     const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 ||this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
     if (hasSem)
@@ -6958,6 +7151,20 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
   }
   renderDefinitions() {
+    // формы и толкования — это ~360 МБ, они грузятся только когда сюда зашли
+    const dict = this.plugin.dict;
+    if (!dict.heavyReady()) {
+      if (dict.heavyStatus === "error") {
+        this.bodyEl.createDiv({ cls: "rr-status", text: t("defsFailed") });
+        return;
+      }
+      this.bodyEl.createDiv({ cls: "rr-status", text: t("defsLoading") });
+      void dict.loadHeavy().then(() => {
+        if (this.tab === "meaning" && this.word)
+          this.refresh();
+      });
+      return;
+    }
     const wrap = this.bodyEl.createDiv({ cls: "rr-defs" });
     this.renderForms(wrap);
     const defs = this.definitions;
@@ -7421,7 +7628,8 @@ var DEFAULT_SETTINGS = {
   filterKind: "all",
   filterSemantic: false,
   localDictDir: "Словари рифм",
-  hideDictDir: true
+  hideDictDir: true,
+  startupLoad: "rhymes"
 };
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
@@ -7575,9 +7783,27 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       // хранилище проиндексировано только сейчас — до этого настоящий регистр папки не узнать
       void this.syncDictDirCase().then(() => this.applyDictDirStyle());
       void this.ensureViewInSidebar(false);
-      if (!import_obsidian4.Platform.isMobile)
-        void this.dict.load().then(() => this.warnBadDicts());
+      void this.startupPreload();
     });
+  }
+  /**
+   * Прогрев словаря по выбранному режиму. Вынесено из onLayoutReady отдельным методом:
+   * иначе это была бы проводка «настройка → словарь», до которой тесты не дотягиваются.
+   */
+  startupPreload() {
+    const mode = this.startupMode();
+    if (mode === "none")
+      return Promise.resolve();
+    return this.dict.load().then(() => {
+      this.warnBadDicts();
+      if (mode === "full")
+        return this.dict.loadHeavy();
+    });
+  }
+  /** Режим прогрева при старте; data.json правят руками, поэтому значение сверяем. */
+  startupMode() {
+    const v = this.settings.startupLoad;
+    return STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
   }
   async loadSettings() {
     var _a;
@@ -7843,6 +8069,18 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.setFollow(v);
       })
     );
+    new import_obsidian4.Setting(containerEl).setName(t("settingStartup")).setDesc(t("settingStartupDesc")).addDropdown((dd) => {
+      dd.addOption("none", t("startupNone"));
+      dd.addOption("rhymes", t("startupRhymes"));
+      dd.addOption("full", t("startupFull"));
+      dd.setValue(this.plugin.startupMode()).onChange(async (v) => {
+        this.plugin.settings.startupLoad = STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
+        await this.plugin.saveSettings();
+        // добавить в память можно сразу, освободить — только перезапуском
+        if (this.plugin.settings.startupLoad === "full")
+          void this.plugin.dict.loadHeavy();
+      });
+    });
     new import_obsidian4.Setting(containerEl).setName(t("dlHeading")).setHeading();
     new import_obsidian4.Setting(containerEl).setName(t("settingUrl")).setDesc(t("settingUrlDesc")).addText(
       (text) => text.setValue(this.plugin.settings.dictUrl).onChange(async (v) => {
