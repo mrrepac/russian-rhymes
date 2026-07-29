@@ -249,11 +249,13 @@ var RhymeDict = class {
       return;
     }
     this.heavyStatus = "loading";
+    // объектами, а не парами: у массива пар TS выводит на элемент union «строка | функция»,
+    // и name + ".txt.gz" ниже становится сложением строки с функцией
     const heavy = [
-      ["forms", (i) => this.formsIdx = i],
-      ["definitions", (i) => this.defs = i]
+      { name: "forms", set: (i) => this.formsIdx = i },
+      { name: "definitions", set: (i) => this.defs = i }
     ];
-    for (const [name, set] of heavy) {
+    for (const { name, set } of heavy) {
       // блочный шард в память не тянем — ради этого всё и затевалось
       if (this.hasBlocks(name))
         continue;
@@ -297,7 +299,8 @@ var RhymeDict = class {
       console.error(`Russian Rhymes: corrupt shard ${name}, removing`, e);
       try {
         await adapter.remove(path);
-      } catch (e2) {
+      } catch {
+        // не удалилось — не беда: файл всё равно перекачивается кнопкой
       }
       return null;
     }
@@ -370,12 +373,12 @@ var RhymeDict = class {
    * словарей не было. Папка внутри хранилища едет как обычные файлы.
    */
   setLocalDir(dir) {
-    const clean = (dir != null ? dir : "").trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
+    const clean = (dir != null ? dir : "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
     this.localDir = clean ? normalizePath(clean) : "";
   }
   /** Папка основного словаря внутри хранилища; пусто — прежнее место в папке плагина. */
   setMainDir(dir) {
-    const clean = (dir != null ? dir : "").trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
+    const clean = (dir != null ? dir : "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
     this.mainDir = clean ? normalizePath(clean) : "";
   }
   /** Куда словарь должен лечь по настройкам. */
@@ -428,7 +431,7 @@ var RhymeDict = class {
     try {
       const listing = await adapter.list(oldDir);
       names = (listing.files || []).map((p) => p.split("/").pop());
-    } catch (e) {
+    } catch {
       return 0;
     }
     names = names.filter((n) => /\.(txt|blk|blkidx)\.gz$/.test(n) && !n.startsWith("local-") || n === "files.json");
@@ -447,7 +450,8 @@ var RhymeDict = class {
       await adapter.writeBinary(to, await adapter.readBinary(from));
       try {
         await adapter.remove(from);
-      } catch (e) {
+      } catch {
+        // копия уже на новом месте; не снёсся старый файл — это не потеря данных
       }
       moved++;
     }
@@ -500,7 +504,8 @@ var RhymeDict = class {
       await adapter.writeBinary(dst, await adapter.readBinary(src));
       try {
         await adapter.remove(src);
-      } catch (e) {
+      } catch {
+        // то же: словарь уже переехал, старый файл в худшем случае просто остался лежать
       }
       moved++;
     }
@@ -539,7 +544,7 @@ var RhymeDict = class {
       const buf = await this.fetchChunked(base + f.name, f.size);
       try {
         ungzip_1(new Uint8Array(buf));
-      } catch (e) {
+      } catch {
         throw new Error(`corrupt download (bad gzip): ${f.name}`);
       }
       await adapter.writeBinary(path, buf);

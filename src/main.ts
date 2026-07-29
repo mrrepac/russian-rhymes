@@ -23,12 +23,15 @@ var DEFAULT_SETTINGS = {
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
 var RussianRhymesPlugin = class extends Plugin {
-  constructor() {
-    super(...arguments);
+  constructor(...args) {
+    super(...args);
     this.settings = DEFAULT_SETTINGS;
     this.userStress = {};
     this.localDicts = [];
     this.lastCopyAt = 0;
+    // папки словарей, спрятанные из проводника (в нижнем регистре, см. applyDictDirStyle)
+    this.hiddenDirs = [];
+    this.dirObserver = null;
     // после двойного Ctrl+C, пока Ctrl не отпущен, стрелки ←/→ листают разделы панели
     this.navArmed = false;
     // режим «следовать за курсором»: реагируем на паузу в наборе, а не на каждый символ
@@ -350,21 +353,52 @@ var RussianRhymesPlugin = class extends Plugin {
    * Держать их в папке плагина нельзя — её не носит синхронизация.
    */
   applyDictDirStyle() {
-    if (!this.dirStyleEl) {
-      this.dirStyleEl = document.head.createEl("style");
+    if (!this.dirCleanupRegistered) {
+      this.dirCleanupRegistered = true;
       this.register(() => {
-        var _a;
-        (_a = this.dirStyleEl) == null ? void 0 : _a.remove();
-        this.dirStyleEl = null;
+        if (this.dirObserver) {
+          this.dirObserver.disconnect();
+          this.dirObserver = null;
+        }
+        this.hiddenDirs = [];
+        this.markHiddenDirs();
       });
     }
-    // регистр сверяем без учёта регистра (флаг i): на Windows папка на диске может
-    // называться иначе, чем записано в настройке, и точное сравнение промахивалось
-    const rule = (d) => `.nav-folder:has(> .nav-folder-title[data-path="${d.replace(/["\\]/g, "\\$&")}" i]) { display: none; }`;
     // и личные словари, и основной: обе папки лежат в хранилище только ради синхронизации,
     // в дереве файлов им делать нечего
     const dirs = this.settings.hideDictDir ? [this.dict.localDir, this.dict.mainDir].filter((d, i, a) => d && a.indexOf(d) === i) : [];
-    this.dirStyleEl.textContent = dirs.map(rule).join("\n");
+    // сравниваем в нижнем регистре: на Windows папка на диске может называться иначе,
+    // чем записано в настройке, и точное сравнение промахивалось
+    this.hiddenDirs = dirs.map((d) => d.toLowerCase());
+    this.markHiddenDirs();
+    this.watchFileExplorer();
+  }
+  /** Поставить класс на строки проводника, отвечающие спрятанным папкам, и снять со всех прочих. */
+  markHiddenDirs() {
+    const titles = document.querySelectorAll(".nav-folder-title[data-path]");
+    for (let i = 0; i < titles.length; i++) {
+      const title = titles[i];
+      const folder = title.parentElement;
+      if (!folder || !folder.classList.contains("nav-folder"))
+        continue;
+      const path = title.getAttribute("data-path") || "";
+      folder.classList.toggle("rr-hidden-dir", this.hiddenDirs.includes(path.toLowerCase()));
+    }
+  }
+  /**
+   * Проводник пересобирает строки папок при каждом раскрытии, а переименование меняет
+   * data-path — класс приходится возвращать. Следим за контейнером проводника, а не за
+   * body: набор текста в редакторе сыпал бы мутациями без остановки. Слушаем только
+   * childList, поэтому класс (мутация атрибута) не вызывает обработчик повторно.
+   */
+  watchFileExplorer() {
+    if (this.dirObserver || !this.hiddenDirs.length)
+      return;
+    const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+    if (!leaf)
+      return;
+    this.dirObserver = new MutationObserver(() => this.markHiddenDirs());
+    this.dirObserver.observe(leaf.view.containerEl, { childList: true, subtree: true });
   }
   /**
    * Привести путь папки к тому регистру, в каком она лежит в хранилище. Windows считает
@@ -702,7 +736,7 @@ var RhymesSettingTab = class extends PluginSettingTab {
   }
   async importFiles(files, kind) {
     new Notice(t("noticeConverting"));
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => window.setTimeout(r, 30));
     let ok = 0;
     for (const file of files) {
       try {

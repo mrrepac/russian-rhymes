@@ -71,7 +71,7 @@ function convertDsl(data, type) {
   if (enc === "utf-8") {
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch (e) {
+    } catch {
       text = new TextDecoder("windows-1251").decode(bytes);
     }
   } else {

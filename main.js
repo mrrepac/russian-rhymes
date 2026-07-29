@@ -5000,10 +5000,10 @@ var RhymeDict = class {
     }
     this.heavyStatus = "loading";
     const heavy = [
-      ["forms", (i) => this.formsIdx = i],
-      ["definitions", (i) => this.defs = i]
+      { name: "forms", set: (i) => this.formsIdx = i },
+      { name: "definitions", set: (i) => this.defs = i }
     ];
-    for (const [name, set] of heavy) {
+    for (const { name, set } of heavy) {
       if (this.hasBlocks(name))
         continue;
       let raw = await this.readGz(name + ".txt.gz");
@@ -5111,12 +5111,12 @@ var RhymeDict = class {
    * словарей не было. Папка внутри хранилища едет как обычные файлы.
    */
   setLocalDir(dir) {
-    const clean = (dir != null ? dir : "").trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
+    const clean = (dir != null ? dir : "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
     this.localDir = clean ? (0, import_obsidian.normalizePath)(clean) : "";
   }
   /** Папка основного словаря внутри хранилища; пусто — прежнее место в папке плагина. */
   setMainDir(dir) {
-    const clean = (dir != null ? dir : "").trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
+    const clean = (dir != null ? dir : "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
     this.mainDir = clean ? (0, import_obsidian.normalizePath)(clean) : "";
   }
   /** Куда словарь должен лечь по настройкам. */
@@ -7126,7 +7126,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   renderChip(container, e, posLabel, lexLabel) {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
-    const chip = container.createEl("span", { cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
+    const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
     chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}${related ? " \xB7 " + t("relatedHint") : ""}`;
     this.attachWordActions(chip, e.word);
   }
@@ -7299,7 +7299,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   chipGroup(wrap, words) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
     for (const w of words) {
-      const chip = row.createEl("span", { cls: "rr-chip", text: w });
+      const chip = row.createSpan({ cls: "rr-chip", text: w });
       chip.title = `${t("chipHint")} \xB7 ${insertHint()}`;
       this.attachWordActions(chip, w);
     }
@@ -7690,12 +7690,14 @@ var DEFAULT_SETTINGS = {
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
 var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
-  constructor() {
-    super(...arguments);
+  constructor(...args) {
+    super(...args);
     this.settings = DEFAULT_SETTINGS;
     this.userStress = {};
     this.localDicts = [];
     this.lastCopyAt = 0;
+    this.hiddenDirs = [];
+    this.dirObserver = null;
     this.navArmed = false;
     this.followSync = (0, import_obsidian4.debounce)(() => this.syncFromCursor(), FOLLOW_DELAY_MS, true);
     this.lastFollowKey = "";
@@ -8011,17 +8013,48 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
    * Держать их в папке плагина нельзя — её не носит синхронизация.
    */
   applyDictDirStyle() {
-    if (!this.dirStyleEl) {
-      this.dirStyleEl = document.head.createEl("style");
+    if (!this.dirCleanupRegistered) {
+      this.dirCleanupRegistered = true;
       this.register(() => {
-        var _a;
-        (_a = this.dirStyleEl) == null ? void 0 : _a.remove();
-        this.dirStyleEl = null;
+        if (this.dirObserver) {
+          this.dirObserver.disconnect();
+          this.dirObserver = null;
+        }
+        this.hiddenDirs = [];
+        this.markHiddenDirs();
       });
     }
-    const rule = (d) => `.nav-folder:has(> .nav-folder-title[data-path="${d.replace(/["\\]/g, "\\$&")}" i]) { display: none; }`;
     const dirs = this.settings.hideDictDir ? [this.dict.localDir, this.dict.mainDir].filter((d, i, a) => d && a.indexOf(d) === i) : [];
-    this.dirStyleEl.textContent = dirs.map(rule).join("\n");
+    this.hiddenDirs = dirs.map((d) => d.toLowerCase());
+    this.markHiddenDirs();
+    this.watchFileExplorer();
+  }
+  /** Поставить класс на строки проводника, отвечающие спрятанным папкам, и снять со всех прочих. */
+  markHiddenDirs() {
+    const titles = document.querySelectorAll(".nav-folder-title[data-path]");
+    for (let i = 0; i < titles.length; i++) {
+      const title = titles[i];
+      const folder = title.parentElement;
+      if (!folder || !folder.classList.contains("nav-folder"))
+        continue;
+      const path = title.getAttribute("data-path") || "";
+      folder.classList.toggle("rr-hidden-dir", this.hiddenDirs.includes(path.toLowerCase()));
+    }
+  }
+  /**
+   * Проводник пересобирает строки папок при каждом раскрытии, а переименование меняет
+   * data-path — класс приходится возвращать. Следим за контейнером проводника, а не за
+   * body: набор текста в редакторе сыпал бы мутациями без остановки. Слушаем только
+   * childList, поэтому класс (мутация атрибута) не вызывает обработчик повторно.
+   */
+  watchFileExplorer() {
+    if (this.dirObserver || !this.hiddenDirs.length)
+      return;
+    const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+    if (!leaf)
+      return;
+    this.dirObserver = new MutationObserver(() => this.markHiddenDirs());
+    this.dirObserver.observe(leaf.view.containerEl, { childList: true, subtree: true });
   }
   /**
    * Привести путь папки к тому регистру, в каком она лежит в хранилище. Windows считает
@@ -8351,7 +8384,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
   }
   async importFiles(files, kind) {
     new import_obsidian4.Notice(t("noticeConverting"));
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => window.setTimeout(r, 30));
     let ok = 0;
     for (const file of files) {
       try {

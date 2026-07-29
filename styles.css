@@ -991,3 +991,10 @@
 .is-phone .rr-fbtn {
   padding: var(--size-2-2) var(--size-2-3);
 }
+
+/* Папка со словарями спрятана из проводника: она служебная, .gz из неё не открыть.
+   Класс ставит плагин (applyDictDirStyle) — путь известен только в рантайме, а вставлять
+   <style> с готовым правилом каталог Obsidian запрещает. */
+.nav-folder.rr-hidden-dir {
+  display: none;
+}

@@ -552,7 +552,8 @@ var RhymesView = class extends ItemView {
         await navigator.clipboard.writeText(w);
         return true;
       }
-    } catch (e) {
+    } catch {
+      // буфер обмена может быть недоступен (нет разрешения, старый webview) — ниже запасной путь
     }
     try {
       const ta = activeDocument.body.createEl("textarea");
@@ -562,7 +563,7 @@ var RhymesView = class extends ItemView {
       const ok = activeDocument.execCommand("copy");
       ta.remove();
       return ok;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -973,7 +974,7 @@ var RhymesView = class extends ItemView {
   renderChip(container, e, posLabel, lexLabel) {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
-    const chip = container.createEl("span", { cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
+    const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
     chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}${related ? " \xB7 " + t("relatedHint") : ""}`;
     this.attachWordActions(chip, e.word);
   }
@@ -1149,7 +1150,7 @@ var RhymesView = class extends ItemView {
   chipGroup(wrap, words) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
     for (const w of words) {
-      const chip = row.createEl("span", { cls: "rr-chip", text: w });
+      const chip = row.createSpan({ cls: "rr-chip", text: w });
       chip.title = `${t("chipHint")} · ${insertHint()}`;
       this.attachWordActions(chip, w);
     }
