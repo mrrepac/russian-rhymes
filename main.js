@@ -4793,6 +4793,14 @@ var RhymeDict = class {
     this.pluginDir = pluginDir;
     // папка личных словарей внутри хранилища; пусто — старое место, рядом с плагином
     this.localDir = "";
+    // то же для основного словаря: синхронизация не носит подпапки плагина, поэтому
+    // словарь в папке плагина приходится качать на каждом устройстве заново. Папка внутри
+    // хранилища едет как обычные файлы — и докачка на втором устройстве не нужна вовсе.
+    this.mainDir = "";
+    // где файлы лежат на самом деле — определяется при загрузке, см. resolveDictDir.
+    // Пусто до первого чтения; конструктор намеренно не зовёт normalizePath — класс
+    // поднимают из бандла в тестах, и лишняя зависимость в конструкторе всё ломает
+    this.activeDictDir = "";
     this.status = "idle";
     this.words = null;
     this.rhymes = null;
@@ -4871,7 +4879,7 @@ var RhymeDict = class {
    * останется на старом пути (грузится в память), поэтому молча выходим.
    */
   async loadBlockIndex(name) {
-    const raw = await this.readGzPath((0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}.blkidx.gz`));
+    const raw = await this.readGzPath(this.dictPath(`${name}.blkidx.gz`));
     if (raw === null)
       return;
     const keys = [];
@@ -4906,7 +4914,7 @@ var RhymeDict = class {
     const adapter = this.app.vault.adapter;
     if (typeof adapter.getResourcePath !== "function")
       return null;
-    const path = (0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}.blk.gz`);
+    const path = this.dictPath(`${name}.blk.gz`);
     const from = bi.offsets[i], len = bi.lengths[i];
     try {
       const resp = await fetch(adapter.getResourcePath(path), {
@@ -5004,7 +5012,10 @@ var RhymeDict = class {
   }
   readGz(name) {
     // файл основного словаря качается заново по кнопке, поэтому битый можно снести
-    return this.readGzPath((0, import_obsidian.normalizePath)(`${this.pluginDir}/dict/${name}`), true);
+    // Битый шард можно снести — он качается заново по кнопке. Но НЕ когда словарь лежит
+    // в хранилище: удаление уедет синхронизацией и убьёт исправную копию на другом
+    // устройстве. Там просто сообщаем о поломке и оставляем файл на месте.
+    return this.readGzPath(this.dictPath(name), !this.mainDir);
   }
   /**
    * Прочитать .gz. dropIfCorrupt — сносить ли файл, который не распаковался; так можно
@@ -5036,6 +5047,7 @@ var RhymeDict = class {
   }
   async doLoad() {
     this.status = "loading";
+    await this.resolveDictDir();
     const wordsRaw = await this.readGz("words.txt.gz");
     const rhymesRaw = await this.readGz("rhymes.txt.gz");
     if (wordsRaw === null || rhymesRaw === null) {
@@ -5104,6 +5116,87 @@ var RhymeDict = class {
     const clean = (dir != null ? dir : "").trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
     this.localDir = clean ? (0, import_obsidian.normalizePath)(clean) : "";
   }
+  /** Папка основного словаря внутри хранилища; пусто — прежнее место в папке плагина. */
+  setMainDir(dir) {
+    const clean = (dir != null ? dir : "").trim().replace(/^[\/\\]+|[\/\\]+$/g, "");
+    this.mainDir = clean ? (0, import_obsidian.normalizePath)(clean) : "";
+  }
+  /** Куда словарь должен лечь по настройкам. */
+  targetDictDir() {
+    return this.mainDir || this.legacyDictDir();
+  }
+  /** Прежнее место — папка плагина. */
+  legacyDictDir() {
+    return (0, import_obsidian.normalizePath)(`${this.pluginDir}/dict`);
+  }
+  /** Файл словаря там, где он реально нашёлся при загрузке (до неё — прежнее место). */
+  dictPath(name) {
+    return (0, import_obsidian.normalizePath)(`${this.activeDictDir || this.legacyDictDir()}/${name}`);
+  }
+  /**
+   * Где словарь лежит на самом деле: сначала папка из настроек, иначе прежнее место.
+   * Так переезд можно не доводить до конца — плагин всё равно найдёт файлы.
+   */
+  async resolveDictDir() {
+    const adapter = this.app.vault.adapter;
+    for (const dir of [this.targetDictDir(), this.legacyDictDir()]) {
+      if (await adapter.exists((0, import_obsidian.normalizePath)(`${dir}/words.txt.gz`))) {
+        this.activeDictDir = dir;
+        return;
+      }
+    }
+    this.activeDictDir = this.targetDictDir();
+  }
+  /** Создать папку словаря по уровням (в хранилище её может не быть вовсе). */
+  async ensureDictDir(dir) {
+    const adapter = this.app.vault.adapter;
+    let path = "";
+    for (const part of dir.split("/")) {
+      path = path ? `${path}/${part}` : part;
+      if (!await adapter.exists(path))
+        await adapter.mkdir(path);
+    }
+  }
+  /**
+   * Перенести файлы словаря в папку из настроек. Личные словари не трогаем — у них свой
+   * переезд. Файл, который уже есть на новом месте, не перезаписываем. onProgress(готово,
+   * всего, имя) — переезд идёт десятками мегабайт, без индикатора это выглядит зависанием.
+   */
+  async relocateDict(oldDir, onProgress) {
+    const adapter = this.app.vault.adapter;
+    const dst = this.targetDictDir();
+    if (!oldDir || oldDir === dst)
+      return 0;
+    let names = [];
+    try {
+      const listing = await adapter.list(oldDir);
+      names = (listing.files || []).map((p) => p.split("/").pop());
+    } catch (e) {
+      return 0;
+    }
+    names = names.filter((n) => /\.(txt|blk|blkidx)\.gz$/.test(n) && !n.startsWith("local-") || n === "files.json");
+    if (names.length === 0)
+      return 0;
+    await this.ensureDictDir(dst);
+    let moved = 0, done = 0;
+    for (const n of names) {
+      const from = (0, import_obsidian.normalizePath)(`${oldDir}/${n}`);
+      const to = (0, import_obsidian.normalizePath)(`${dst}/${n}`);
+      done++;
+      if (onProgress)
+        onProgress(done, names.length, n);
+      if (from === to || await adapter.exists(to) || !await adapter.exists(from))
+        continue;
+      await adapter.writeBinary(to, await adapter.readBinary(from));
+      try {
+        await adapter.remove(from);
+      } catch (e) {
+      }
+      moved++;
+    }
+    this.activeDictDir = dst;
+    return moved;
+  }
   localFilePath(id) {
     return this.localDir ? (0, import_obsidian.normalizePath)(`${this.localDir}/local-${id}.txt.gz`) : this.legacyLocalPath(id);
   }
@@ -5163,9 +5256,11 @@ var RhymeDict = class {
    */
   async downloadDict(baseUrl, onProgress) {
     const adapter = this.app.vault.adapter;
-    const dir = (0, import_obsidian.normalizePath)(`${this.pluginDir}/dict`);
-    if (!await adapter.exists(dir))
-      await adapter.mkdir(dir);
+    // качаем сразу в папку из настроек: если словарь живёт в хранилище, скачанное
+    // тут же поедет синхронизацией на остальные устройства
+    const dir = this.targetDictDir();
+    await this.ensureDictDir(dir);
+    this.activeDictDir = dir;
     const base = baseUrl.trim().replace(/\/+$/, "") + "/";
     const listResp = await (0, import_obsidian.requestUrl)({ url: base + "files.json" });
     const files = JSON.parse(listResp.text).files;
@@ -5912,6 +6007,12 @@ var en = {
   locEmpty: "no dictionaries yet \u2014 add a Lingvo/GoldenDict .dsl file",
   locFolder: "Folder in the vault",
   locFolderDesc: "Where personal dictionaries are stored. A folder inside the vault travels with Obsidian Sync (turn on syncing of other file types); the plugin folder does not \u2014 that is why the list can arrive on another device without the dictionaries themselves. Leave empty to keep them next to the plugin.",
+  mainFolder: "Dictionary folder (for sync)",
+  mainFolderDesc: "Move the dictionary into a vault folder so Obsidian Sync carries it to your other devices and they never have to download it again. Empty \u2014 keep it in the plugin folder, where sync does not reach it. Turn on \u201Csync all other file types\u201D in Sync settings.",
+  mainFolderHint: "empty \u2014 inside the plugin folder",
+  mainMoving: "Moving the dictionary\u2026",
+  mainMoved: "Files moved:",
+  mainNothingMoved: "Nothing to move",
   locHideDir: "Hide the folder in the file explorer",
   locHideDirDesc: "The folder has to live in the vault so that sync carries it, but it is a service folder — .gz files cannot be opened and never show up in search, graph or the quick switcher anyway. Turn this off to see it in the file tree.",
   locNoFile: "no file",
@@ -6043,6 +6144,12 @@ var ru = {
   locEmpty: "\u043F\u043E\u043A\u0430 \u043F\u0443\u0441\u0442\u043E \u2014 \u0434\u043E\u0431\u0430\u0432\u044C\u0442\u0435 .dsl (Lingvo/GoldenDict)",
   locFolder: "\u041F\u0430\u043F\u043A\u0430 \u0432 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0435",
   locFolderDesc: "\u0413\u0434\u0435 \u043B\u0435\u0436\u0430\u0442 \u043B\u0438\u0447\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u0438. \u041F\u0430\u043F\u043A\u0443 \u0432\u043D\u0443\u0442\u0440\u0438 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0430 \u043D\u043E\u0441\u0438\u0442 Obsidian Sync (\u0432\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \u0432 \u043D\u0451\u043C \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044E \u043F\u0440\u043E\u0447\u0438\u0445 \u0442\u0438\u043F\u043E\u0432 \u0444\u0430\u0439\u043B\u043E\u0432), \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 \u2014 \u043D\u0435\u0442: \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u043D\u0430 \u0434\u0440\u0443\u0433\u043E\u043C \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0435 \u0441\u043F\u0438\u0441\u043E\u043A \u0441\u043B\u043E\u0432\u0430\u0440\u0435\u0439 \u0435\u0441\u0442\u044C, \u0430 \u0441\u0430\u043C\u0438\u0445 \u0441\u043B\u043E\u0432\u0430\u0440\u0435\u0439 \u043D\u0435\u0442. \u041F\u0443\u0441\u0442\u043E \u2014 \u0434\u0435\u0440\u0436\u0430\u0442\u044C \u0440\u044F\u0434\u043E\u043C \u0441 \u043F\u043B\u0430\u0433\u0438\u043D\u043E\u043C, \u043A\u0430\u043A \u0440\u0430\u043D\u044C\u0448\u0435.",
+  mainFolder: "\u041F\u0430\u043F\u043A\u0430 \u0441\u043B\u043E\u0432\u0430\u0440\u044F (\u0434\u043B\u044F \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u0438)",
+  mainFolderDesc: "\u041F\u0435\u0440\u0435\u043D\u0435\u0441\u0442\u0438 \u0441\u043B\u043E\u0432\u0430\u0440\u044C \u0432 \u043F\u0430\u043F\u043A\u0443 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0430, \u0447\u0442\u043E\u0431\u044B \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F \u0434\u043E\u043D\u0435\u0441\u043B\u0430 \u0435\u0433\u043E \u0434\u043E \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0445 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432 \u0438 \u0438\u043C \u043D\u0435 \u043F\u0440\u0438\u0448\u043B\u043E\u0441\u044C \u043A\u0430\u0447\u0430\u0442\u044C \u0435\u0433\u043E \u0437\u0430\u043D\u043E\u0432\u043E. \u041F\u0443\u0441\u0442\u043E \u2014 \u043E\u0441\u0442\u0430\u0451\u0442\u0441\u044F \u0432 \u043F\u0430\u043F\u043A\u0435 \u043F\u043B\u0430\u0433\u0438\u043D\u0430, \u043A\u0443\u0434\u0430 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F \u043D\u0435 \u0437\u0430\u0433\u043B\u044F\u0434\u044B\u0432\u0430\u0435\u0442. \u0412 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0430\u0445 Sync \u043D\u0443\u0436\u043D\u043E \u0432\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u00AB\u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0435 \u0442\u0438\u043F\u044B \u0444\u0430\u0439\u043B\u043E\u0432\u00BB.",
+  mainFolderHint: "\u043F\u0443\u0441\u0442\u043E \u2014 \u0432 \u043F\u0430\u043F\u043A\u0435 \u043F\u043B\u0430\u0433\u0438\u043D\u0430",
+  mainMoving: "\u041F\u0435\u0440\u0435\u043D\u043E\u0441\u0438\u043C \u0441\u043B\u043E\u0432\u0430\u0440\u044C\u2026",
+  mainMoved: "\u0424\u0430\u0439\u043B\u043E\u0432 \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u0435\u043D\u043E:",
+  mainNothingMoved: "\u041F\u0435\u0440\u0435\u043D\u043E\u0441\u0438\u0442\u044C \u043D\u0435\u0447\u0435\u0433\u043E",
   locHideDir: "\u041F\u0440\u044F\u0442\u0430\u0442\u044C \u043F\u0430\u043F\u043A\u0443 \u0432 \u043F\u0440\u043E\u0432\u043E\u0434\u043D\u0438\u043A\u0435",
   locHideDirDesc: "\u041F\u0430\u043F\u043A\u0435 \u043F\u0440\u0438\u0445\u043E\u0434\u0438\u0442\u0441\u044F \u043B\u0435\u0436\u0430\u0442\u044C \u0432 \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0435, \u0438\u043D\u0430\u0447\u0435 \u0435\u0451 \u043D\u0435 \u043D\u043E\u0441\u0438\u0442 \u0441\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F, \u043D\u043E \u043E\u043D\u0430 \u0441\u043B\u0443\u0436\u0435\u0431\u043D\u0430\u044F: .gz \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0442\u044C, \u0432 \u043F\u043E\u0438\u0441\u043A, \u0433\u0440\u0430\u0444 \u0438 \u0431\u044B\u0441\u0442\u0440\u043E\u0435 \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435 \u0442\u0430\u043A\u0438\u0435 \u0444\u0430\u0439\u043B\u044B \u0438 \u0442\u0430\u043A \u043D\u0435 \u043F\u043E\u043F\u0430\u0434\u0430\u044E\u0442. \u0412\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u0435, \u0447\u0442\u043E\u0431\u044B \u0432\u0438\u0434\u0435\u0442\u044C \u0435\u0451 \u0432 \u0434\u0435\u0440\u0435\u0432\u0435 \u0444\u0430\u0439\u043B\u043E\u0432.",
   locNoFile: "\u043D\u0435\u0442 \u0444\u0430\u0439\u043B\u0430",
@@ -7629,7 +7736,9 @@ var DEFAULT_SETTINGS = {
   filterSemantic: false,
   localDictDir: "Словари рифм",
   hideDictDir: true,
-  startupLoad: "rhymes"
+  startupLoad: "rhymes",
+  // пусто — словарь остаётся в папке плагина, как раньше; переезд только по желанию
+  mainDictDir: ""
 };
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
@@ -7656,6 +7765,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
     this.syncLocalManifest();
     this.dict.setLocalDir(this.settings.localDictDir);
+    this.dict.setMainDir(this.settings.mainDictDir);
     this.applyDictDirStyle();
     this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
     this.addRibbonIcon("feather", t("cmdOpen"), () => void this.activateView(null));
@@ -7968,10 +8078,13 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
         this.dirStyleEl = null;
       });
     }
-    const dir = this.settings.hideDictDir ? this.dict.localDir : "";
     // регистр сверяем без учёта регистра (флаг i): на Windows папка на диске может
     // называться иначе, чем записано в настройке, и точное сравнение промахивалось
-    this.dirStyleEl.textContent = dir ? `.nav-folder:has(> .nav-folder-title[data-path="${dir.replace(/["\\]/g, "\\$&")}" i]) { display: none; }` : "";
+    const rule = (d) => `.nav-folder:has(> .nav-folder-title[data-path="${d.replace(/["\\]/g, "\\$&")}" i]) { display: none; }`;
+    // и личные словари, и основной: обе папки лежат в хранилище только ради синхронизации,
+    // в дереве файлов им делать нечего
+    const dirs = this.settings.hideDictDir ? [this.dict.localDir, this.dict.mainDir].filter((d, i, a) => d && a.indexOf(d) === i) : [];
+    this.dirStyleEl.textContent = dirs.map(rule).join("\n");
   }
   /**
    * Привести путь папки к тому регистру, в каком она лежит в хранилище. Windows считает
@@ -8100,6 +8213,11 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.plugin.refreshPanel();
       });
     });
+    new import_obsidian4.Setting(containerEl).setName(t("mainFolder")).setDesc(t("mainFolderDesc")).addText((text) => {
+      text.setPlaceholder(t("mainFolderHint")).setValue(this.plugin.settings.mainDictDir);
+      // переезд по потере фокуса: на каждый символ он заводил бы папки «С», «Сл», «Сло»…
+      text.inputEl.addEventListener("blur", () => void this.changeMainFolder(text.getValue()));
+    });
     new import_obsidian4.Setting(containerEl).setName(t("locHeading")).setHeading();
     new import_obsidian4.Setting(containerEl).setName(t("locFolder")).setDesc(t("locFolderDesc")).addText((text) => {
       text.setPlaceholder(DEFAULT_SETTINGS.localDictDir).setValue(this.plugin.settings.localDictDir);
@@ -8114,6 +8232,33 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       })
     );
     this.renderDefsSection(containerEl);
+  }
+  /**
+   * Сменить папку основного словаря и перетащить туда файлы. Это десятки мегабайт,
+   * поэтому с индикатором; по дороге читать словарь нельзя — сбрасываем его после.
+   */
+  async changeMainFolder(value) {
+    const dict = this.plugin.dict;
+    const old = dict.activeDictDir;
+    dict.setMainDir(value);
+    this.plugin.settings.mainDictDir = dict.mainDir;
+    await this.plugin.saveSettings();
+    if (dict.targetDictDir() === old) {
+      this.plugin.applyDictDirStyle();
+      return;
+    }
+    const notice = new import_obsidian4.Notice(t("mainMoving"), 0);
+    let moved = 0;
+    try {
+      moved = await dict.relocateDict(old, (done, total, name) => notice.setMessage(`${t("mainMoving")} ${done}/${total} \xB7 ${name}`));
+    } catch (e) {
+      console.error("Russian Rhymes: не удалось перенести словарь", e);
+    }
+    notice.hide();
+    new import_obsidian4.Notice(moved > 0 ? `${t("mainMoved")} ${moved}` : t("mainNothingMoved"));
+    this.plugin.applyDictDirStyle();
+    await dict.reloadAfterDownload();
+    this.plugin.refreshPanel();
   }
   /** Сменить папку личных словарей и перетащить в неё уже импортированные файлы. */
   async changeDictFolder(value) {

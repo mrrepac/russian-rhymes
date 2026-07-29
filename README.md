@@ -36,6 +36,12 @@ Obsidian installs only the plugin code (`main.js`, `manifest.json`, `styles.css`
 
 The download is a manual, explicit step so it never eats mobile data or storage without your consent.
 
+**Download it once, not once per device.** Obsidian Sync does not reach inside a plugin's folder,
+so by default every device fetches its own copy. Point **Dictionary folder (for sync)** in the
+settings at a folder inside your vault and the plugin moves the dictionary there; Sync then carries
+it like any other file and your phone never downloads anything. Requires "sync all other file types"
+in Sync settings. The folder is hidden from the file explorer along with the personal-dictionary one.
+
 Since 2.0.0 the two biggest shards ship as `*.blk.gz` — a gzip file made of independent ~64 KB
 members — next to a small `*.blkidx.gz` listing the first key and byte offset of every block. The
 plugin fetches a single block with an HTTP `Range` request and inflates only that. Where ranged
