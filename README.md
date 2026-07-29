@@ -67,9 +67,18 @@ Because the compiled data includes ShareAlike sources, the dictionary as a whole
 
 ## Development
 
-There is no build step. `main.js` is a plain bundle kept in the repository and edited directly —
-copy it (together with `manifest.json` and `styles.css`) into
-`<vault>/.obsidian/plugins/russian-rhymes/` and reload the plugin to test.
+`main.js` is bundled from `src/` with esbuild:
+
+```
+npm ci
+npm run build
+```
+
+Copy `main.js` (together with `manifest.json` and `styles.css`) into
+`<vault>/.obsidian/plugins/russian-rhymes/` and reload the plugin to test. The bundle is committed
+next to the sources so that manual installs and the release assets stay in step; the release
+workflow rebuilds it and fails the release if the committed file disagrees, so build before you
+commit. The output is deliberately not minified.
 
 The headless test suite and the scripts that compile the dictionary from the sources above are
 kept outside this repository. `dict/` is not committed either — the data is published under the

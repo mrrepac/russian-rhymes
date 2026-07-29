@@ -173,7 +173,8 @@
 
 .rr-alt-link {
   cursor: pointer;
-  text-decoration: underline dotted;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
 }
 
 .rr-alt-link:hover {
@@ -468,7 +469,8 @@
 
 .rr-defword:hover {
   color: var(--text-accent);
-  text-decoration: underline dotted;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
 }
 
 /* цитаты-примеры под значением: приглушены, с лёгкой чертой слева */

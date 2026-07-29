@@ -3,7 +3,7 @@ name: Release Obsidian plugin
 on:
   push:
     tags:
-      # только версионные теги (1.9.1), но НЕ тег `dict` с ассетами словаря
+      # только версионные теги (2.1.0), но НЕ тег `dict` с ассетами словаря
       - "*.*.*"
 
 permissions:
@@ -17,7 +17,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # сборки нет: main.js лежит в репозитории и правится напрямую
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # main.js в репозитории тоже лежит, но релиз собирается из исходников:
+      # так опубликованный файл заведомо соответствует src/, а не чьей-то забытой правке
+      - name: Build
+        run: npm run build
+
+      - name: Fail if the committed bundle is stale
+        run: |
+          if ! git diff --quiet -- main.js; then
+            echo "main.js в репозитории не совпадает со сборкой из src/."
+            echo "Соберите локально (npm run build) и закоммитьте результат."
+            git --no-pager diff --stat -- main.js
+            exit 1
+          fi
+
       - name: Attest build provenance for release assets
         uses: actions/attest-build-provenance@v1
         with:
