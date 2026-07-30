@@ -25,7 +25,8 @@ interface HostPlugin {
   getUserStress(word: string): number | undefined;
   setUserStress(word: string, s: number | null): void;
   warnBadDicts(): void;
-  downloadDict(onProgress?: (done: number, total: number) => void): Promise<boolean>;
+  warnMissingShards(): void;
+  downloadDict(onProgress?: (done: number, total: number) => void): Promise<{ ok: boolean; failed: string[] }>;
 }
 
 const VIEW_TYPE_RHYMES = "russian-rhymes-view";
@@ -296,8 +297,9 @@ const RhymesView = class extends ItemView {
       this.renderStatus(t("dictLoading"));
       await dict.load();
       // сюда попадаем, если слово запросили раньше, чем догрузилась первая волна;
-      // про сломанные личные словари узнаём тут же
+      // про сломанные личные словари и недостающие файлы словаря узнаём тут же
       this.plugin.warnBadDicts();
+      this.plugin.warnMissingShards();
     }
     if (dict.status === "missing" || dict.status === "error") {
       this.renderMissing();
@@ -610,8 +612,11 @@ const RhymesView = class extends ItemView {
   async downloadFromPanel(btn: HTMLButtonElement, prog: HTMLElement) {
     btn.disabled = true;
     prog.setText(t("dlProgress"));
-    const ok = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
-    if (ok) {
+    const res = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
+    if (res.ok) {
+      // часть файлов могла не дойти: словарь при этом работает, но молчать об этом нельзя
+      if (res.failed.length)
+        new Notice(t("dlFailedFiles") + res.failed.join(", "), 1e4);
       if (this.word)
         await this.showWord(this.word);
       else

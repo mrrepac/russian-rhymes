@@ -763,6 +763,44 @@
   transform: translateY(1px);
 }
 
+/* инвентарь основного словаря в настройках: название раздела и размер файла на диске */
+.rr-shards {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 var(--size-4-3) 0;
+  font-size: var(--font-ui-smaller);
+}
+
+.rr-shardrow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  padding: var(--size-2-1) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.rr-shardrow:last-of-type {
+  border-bottom: none;
+}
+
+.rr-shard-size {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* недостающий или битый файл — единственное, что тут стоит подсветить */
+.rr-shard-bad,
+.rr-shard-bad .rr-shard-size {
+  color: var(--text-error);
+}
+
+.rr-shard-note {
+  margin-top: var(--size-2-2);
+  color: var(--text-muted);
+}
+
 /* список личных толковых словарей в настройках — строки с перетаскиванием */
 .rr-dictlist {
   display: flex;

@@ -1,6 +1,6 @@
 import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
 import type { App, Debouncer, Editor, PluginManifest, Setting, SettingDefinitionItem, SettingGroup, TAbstractFile, TFolder } from "obsidian";
-import type { DictKind, LocalDict } from "./dict";
+import type { DictKind, LocalDict, ShardInfo } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
@@ -54,6 +54,40 @@ const DEFAULT_SETTINGS = {
 };
 const FOLLOW_DELAY_MS = 500;
 const MIN_FOLLOW_LEN = 3;
+/**
+ * Название шарда для настроек и уведомлений. Перечислено вручную, а не собрано из ключа:
+ * t() принимает только существующие ключи, и склеенный ключ такой проверки не проходит.
+ * Таблица строится на каждый вызов — язык берётся из moment в момент обращения.
+ */
+function shardTitle(name: string) {
+  const titles: Record<string, string> = {
+    words: t("shardWords"),
+    rhymes: t("shardRhymes"),
+    forms: t("shardForms"),
+    definitions: t("shardDefinitions"),
+    synonyms: t("shardSynonyms"),
+    antonyms: t("shardAntonyms"),
+    associations: t("shardAssociations"),
+    hypernyms: t("shardHypernyms"),
+    hyponyms: t("shardHyponyms"),
+    related: t("shardRelated"),
+    idioms: t("shardIdioms"),
+    proverbs: t("shardProverbs"),
+    metagrams: t("shardMetagrams"),
+    anagrams: t("shardAnagrams"),
+    lemmas: t("shardLemmas"),
+    phrases: t("shardPhrases"),
+    yo: t("shardYo"),
+    generator: t("shardGenerator")
+  };
+  return titles[name] || name;
+}
+/** Размер файла человеку: мегабайты с десятой, мелочь — в килобайтах. */
+function fmtSize(bytes: number) {
+  if (bytes >= 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("unitMb")}`;
+  return `${Math.max(1, Math.round(bytes / 1024))} ${t("unitKb")}`;
+}
 const RussianRhymesPlugin = class extends Plugin {
   settings: RhymesSettings;
   userStress: Record<string, number>;
@@ -68,6 +102,7 @@ const RussianRhymesPlugin = class extends Plugin {
   followSync: Debouncer<[], void>;
   lastFollowKey: string;
   badWarned: string;
+  missingWarned: string;
 
   constructor(app: App, manifest: PluginManifest) {
     super(app, manifest);
@@ -87,6 +122,8 @@ const RussianRhymesPlugin = class extends Plugin {
     this.lastFollowKey = "";
     // о каких сломанных личных словарях уже сказали (чтобы не повторяться на каждой загрузке)
     this.badWarned = "";
+    // то же про недостающие файлы самого словаря
+    this.missingWarned = "";
   }
   async onload() {
     let _a;
@@ -235,6 +272,7 @@ const RussianRhymesPlugin = class extends Plugin {
       return Promise.resolve();
     return this.dict.load().then(() => {
       this.warnBadDicts();
+      this.warnMissingShards();
       if (mode === "full")
         return this.dict.loadHeavy();
     });
@@ -284,6 +322,19 @@ const RussianRhymesPlugin = class extends Plugin {
       return;
     this.badWarned = key;
     new Notice(t("noticeBadDicts") + key, 1e4);
+  }
+  /**
+   * Сказать про недостающие файлы самого словаря. Отсутствие шарда — не ошибка загрузки:
+   * панель работает и без пословиц. Но оборванная закачка выглядит точно так же, а вкладки
+   * при этом молча пусты — поэтому один раз называем, чего именно нет.
+   */
+  warnMissingShards() {
+    const missing = this.dict.missingShards;
+    const key = missing.join(",");
+    if (!missing.length || key === this.missingWarned)
+      return;
+    this.missingWarned = key;
+    new Notice(t("noticeMissingShards") + missing.map((n) => shardTitle(n)).join(", "), 1e4);
   }
   async saveSettings() {
     const data = { settings: this.settings, userStress: this.userStress, localDicts: this.localDicts };
@@ -517,12 +568,14 @@ const RussianRhymesPlugin = class extends Plugin {
    */
   async downloadDict(onProgress?: (done: number, total: number, name: string) => void) {
     try {
-      await this.dict.downloadDict(this.settings.dictUrl, onProgress);
+      const report = await this.dict.downloadDict(this.settings.dictUrl, onProgress);
       await this.dict.reloadAfterDownload();
-      return this.dict.status === "ready";
+      // «готов» и «всё скачалось» — разные вещи: словарь запускается и с недостачей,
+      // поэтому список недошедших файлов идёт наверх отдельно и называется поимённо
+      return { ok: this.dict.status === "ready", failed: report.failed };
     } catch (e) {
       console.error("Russian Rhymes: dict download failed", e);
-      return false;
+      return { ok: false, failed: [] };
     }
   }
 };
@@ -582,7 +635,8 @@ const RhymesSettingTab = class extends PluginSettingTab {
             control: { type: "text", key: "dictUrl" }
           },
           { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
-          { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") }
+          { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") },
+          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) }
         ]
       },
       {
@@ -644,11 +698,16 @@ const RhymesSettingTab = class extends PluginSettingTab {
       btn.onClick(async () => {
         btn.setDisabled(true);
         const notice = new Notice(t("dlProgress"), 0);
-        const ok = await this.plugin.downloadDict((done, total) => notice.setMessage(`${t("dlProgress")} ${done}/${total}`));
+        const res = await this.plugin.downloadDict((done, total) => notice.setMessage(`${t("dlProgress")} ${done}/${total}`));
         notice.hide();
-        new Notice(ok ? t("dlDone") : t("dlFailed"));
+        if (res.failed.length)
+          new Notice(t("dlFailedFiles") + res.failed.join(", "), 1e4);
+        else
+          new Notice(res.ok ? t("dlDone") : t("dlFailed"));
         btn.setDisabled(false);
         this.plugin.refreshPanel();
+        // список файлов после закачки врал бы, если бы остался прежним
+        this.update();
       });
     });
   }
@@ -734,6 +793,52 @@ const RhymesSettingTab = class extends PluginSettingTab {
         }
       ]
     };
+  }
+  /**
+   * Инвентарь словаря: что из двадцати файлов лежит на диске. Единственное место, где
+   * видно оборванную закачку — до этого недостающий шард просто оборачивался пустой
+   * вкладкой. Читается с диска, поэтому список заполняется после ответа, а не сразу.
+   */
+  renderInventory(setting: Setting, group: SettingGroup) {
+    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
+    if (!host)
+      return;
+    const listEl = host.createDiv({ cls: "rr-shards" });
+    listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
+    const fill = () => {
+      void this.plugin.dict.inventory().then((inv) => {
+        listEl.empty();
+        this.fillInventory(listEl, inv);
+      });
+    };
+    setting.addExtraButton((btn) => {
+      btn.setIcon("refresh-cw").setTooltip(t("invRefresh"));
+      btn.onClick(() => fill());
+    });
+    fill();
+    // строку могут перерисовать в одиночку, а список висит рядом с ней, не внутри
+    return () => listEl.remove();
+  }
+  fillInventory(listEl: HTMLElement, inv: ShardInfo[]) {
+    let have = 0, bytes = 0;
+    for (const s of inv) {
+      const row = listEl.createDiv({ cls: "rr-shardrow" });
+      row.createSpan({ cls: "rr-shard-name", text: shardTitle(s.name) });
+      if (s.present && !s.broken) {
+        have++;
+        bytes += s.size;
+        row.createSpan({ cls: "rr-shard-size", text: fmtSize(s.size) });
+      } else {
+        row.addClass("rr-shard-bad");
+        // «повреждён» и «нет файла» — разные беды: первый чинится перекачиванием этого
+        // файла, второй мог и не скачаться вовсе
+        row.createSpan({ cls: "rr-shard-size", text: s.broken ? t("invBroken") : t("invMissing") });
+      }
+    }
+    const total = listEl.createDiv({ cls: "rr-shard-note" });
+    total.setText(`${t("invTotal")} ${have}/${inv.length} · ${fmtSize(bytes)}`);
+    if (have < inv.length)
+      listEl.createDiv({ cls: "rr-shard-note rr-shard-bad", text: t("invHint") });
   }
   renderDictSection(setting: Setting, group: SettingGroup, kind: DictKind, dicts: LocalDict[]) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });

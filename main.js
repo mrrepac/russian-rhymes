@@ -4858,6 +4858,8 @@ var RhymeDict = class {
     this.yoMap = /* @__PURE__ */ new Map();
     this.local = /* @__PURE__ */ new Map();
     this.localBad = /* @__PURE__ */ new Set();
+    this.missingShards = [];
+    this.badShards = /* @__PURE__ */ new Set();
     this.manifest = [];
     this.localOrder = [];
     this.loading = null;
@@ -5024,6 +5026,103 @@ var RhymeDict = class {
     }
     this.heavyStatus = "ready";
   }
+  /**
+   * Состав словаря. Порядок — как в панели: сначала то, без чего она не работает,
+   * потом вкладки, потом служебное. Шарды второй волны идут с blocks-вариантом первым:
+   * блочная пара и есть то, что кладётся в релиз, а целый .txt.gz остался для старых
+   * установок. load не задан там, где шард грузится не через buildIndex (вторая волна).
+   */
+  shardSpecs() {
+    return [
+      // words и rhymes читает doLoad отдельно: без любого из них словарь считается
+      // отсутствующим, поэтому решение принимается до разбора остальных файлов
+      { name: "words", variants: [["words.txt.gz"]], required: true },
+      { name: "rhymes", variants: [["rhymes.txt.gz"]], required: true },
+      { name: "forms", variants: [["forms.blk.gz", "forms.blkidx.gz"], ["forms.blk.gz"], ["forms.txt.gz"]], heavy: true },
+      {
+        name: "definitions",
+        variants: [["definitions.blk.gz", "definitions.blkidx.gz"], ["definitions.blk.gz"], ["definitions.txt.gz"]],
+        heavy: true
+      },
+      { name: "synonyms", variants: [["synonyms.txt.gz"]], load: (raw) => this.syns = buildIndex(raw) },
+      { name: "antonyms", variants: [["antonyms.txt.gz"]], load: (raw) => this.ants = buildIndex(raw) },
+      { name: "associations", variants: [["associations.txt.gz"]], load: (raw) => this.assoc = buildIndex(raw) },
+      { name: "hypernyms", variants: [["hypernyms.txt.gz"]], load: (raw) => this.hyper = buildIndex(raw) },
+      { name: "hyponyms", variants: [["hyponyms.txt.gz"]], load: (raw) => this.hypo = buildIndex(raw) },
+      { name: "related", variants: [["related.txt.gz"]], load: (raw) => this.related = buildIndex(raw) },
+      { name: "idioms", variants: [["idioms.txt.gz"]], load: (raw) => this.idioms = buildIndex(raw) },
+      { name: "proverbs", variants: [["proverbs.txt.gz"]], load: (raw) => this.proverbs = buildIndex(raw) },
+      { name: "metagrams", variants: [["metagrams.txt.gz"]], load: (raw) => this.metagrams = buildIndex(raw) },
+      { name: "anagrams", variants: [["anagrams.txt.gz"]], load: (raw) => this.anagrams = buildIndex(raw) },
+      { name: "lemmas", variants: [["lemmas.txt.gz"]], load: (raw) => this.lemmas = buildIndex(raw) },
+      { name: "phrases", variants: [["phrases.txt.gz"]], load: (raw) => this.phrasesIdx = buildIndex(raw) },
+      { name: "yo", variants: [["yo.txt.gz"]], load: (raw) => this.parseYo(raw) },
+      { name: "generator", variants: [["generator.txt.gz"]], load: (raw) => this.gen = this.parseGenerator(raw) }
+    ];
+  }
+  /**
+   * Что из словаря реально лежит на диске. Загрузка недостающий шард пропускает молча —
+   * и правильно делает, без пословиц словарь работает, — но тогда единственное место,
+   * где видно недостачу, это вот этот список в настройках.
+   */
+  async inventory() {
+    if (!this.activeDictDir)
+      await this.resolveDictDir();
+    const out = [];
+    for (const spec of this.shardSpecs()) {
+      const info = {
+        name: spec.name,
+        present: false,
+        broken: this.badShards.has(spec.name),
+        size: 0,
+        required: !!spec.required,
+        files: spec.variants[0]
+      };
+      for (const variant of spec.variants) {
+        let size = 0, all = true;
+        for (const file of variant) {
+          const bytes = await this.fileSize(this.dictPath(file));
+          if (bytes === null) {
+            all = false;
+            break;
+          }
+          size += bytes;
+        }
+        if (all) {
+          info.present = true;
+          info.size = size;
+          info.files = variant;
+          break;
+        }
+      }
+      out.push(info);
+    }
+    return out;
+  }
+  /** Размер файла или null, если файла нет. stat есть не у всякой заглушки — как и getResourcePath. */
+  async fileSize(path) {
+    const adapter = this.app.vault.adapter;
+    if (!await adapter.exists(path))
+      return null;
+    if (typeof adapter.stat !== "function")
+      return 0;
+    const st = await adapter.stat(path);
+    return st ? st.size : 0;
+  }
+  /** Имена шардов, которых не хватает: считается после загрузки, показывается в настройках. */
+  async refreshMissing() {
+    const inv = await this.inventory();
+    this.missingShards = inv.filter((s) => !s.present || s.broken).map((s) => s.name);
+    return this.missingShards;
+  }
+  /** Ёфикация ввода: е-написание -> однозначная ё-версия. */
+  parseYo(raw) {
+    for (const line of raw.split("\n")) {
+      const tab = line.indexOf("	");
+      if (tab > 0)
+        this.yoMap.set(line.slice(0, tab), line.slice(tab + 1));
+    }
+  }
   readGz(name) {
     return this.readGzPath(this.dictPath(name), !this.mainDir);
   }
@@ -5072,36 +5171,17 @@ var RhymeDict = class {
     this.blockCache.clear();
     for (const name of HEAVY_SHARDS)
       await this.loadBlockIndex(name);
-    const opt = [
-      { name: "synonyms.txt.gz", set: (i) => this.syns = i },
-      { name: "antonyms.txt.gz", set: (i) => this.ants = i },
-      { name: "associations.txt.gz", set: (i) => this.assoc = i },
-      { name: "hypernyms.txt.gz", set: (i) => this.hyper = i },
-      { name: "hyponyms.txt.gz", set: (i) => this.hypo = i },
-      { name: "related.txt.gz", set: (i) => this.related = i },
-      { name: "idioms.txt.gz", set: (i) => this.idioms = i },
-      { name: "proverbs.txt.gz", set: (i) => this.proverbs = i },
-      { name: "metagrams.txt.gz", set: (i) => this.metagrams = i },
-      { name: "anagrams.txt.gz", set: (i) => this.anagrams = i },
-      { name: "lemmas.txt.gz", set: (i) => this.lemmas = i },
-      { name: "phrases.txt.gz", set: (i) => this.phrasesIdx = i }
-    ];
-    for (const { name, set } of opt) {
-      const raw = await this.readGz(name);
+    this.badShards.clear();
+    for (const spec of this.shardSpecs()) {
+      if (spec.required || spec.heavy || !spec.load)
+        continue;
+      const file = spec.variants[0][0];
+      const raw = await this.readGz(file);
       if (raw !== null)
-        set(buildIndex(raw));
+        spec.load(raw);
+      else if (await this.fileSize(this.dictPath(file)) !== null)
+        this.badShards.add(spec.name);
     }
-    const yoRaw = await this.readGz("yo.txt.gz");
-    if (yoRaw !== null) {
-      for (const line of yoRaw.split("\n")) {
-        const tab = line.indexOf("	");
-        if (tab > 0)
-          this.yoMap.set(line.slice(0, tab), line.slice(tab + 1));
-      }
-    }
-    const genRaw = await this.readGz("generator.txt.gz");
-    if (genRaw !== null)
-      this.gen = this.parseGenerator(genRaw);
     await this.relocateLocalDicts("");
     this.localBad.clear();
     for (const d of this.manifest) {
@@ -5113,6 +5193,7 @@ var RhymeDict = class {
       else if (await this.localFileExists(d.id))
         this.localBad.add(d.id);
     }
+    await this.refreshMissing();
     this.status = "ready";
   }
   /**
@@ -5260,7 +5341,8 @@ var RhymeDict = class {
   /**
    * Скачать файлы словаря с baseUrl (GitHub-релиз) в папку dict/. Личные словари
    * (local-*) не трогаются. Возобновляемо: уже скачанный файл нужного размера
-   * пропускается. onProgress(done, total, name) — для индикатора.
+   * пропускается. onProgress(done, total, name) — для индикатора. Возвращает отчёт:
+   * недошедшие файлы названы поимённо, а не превращаются в одно «не удалось скачать».
    */
   async downloadDict(baseUrl, onProgress) {
     const adapter = this.app.vault.adapter;
@@ -5273,6 +5355,11 @@ var RhymeDict = class {
     if (!isDictFileList(files) || files.length === 0)
       throw new Error("empty files.json");
     let done = 0;
+    const failed = [];
+    const step = (name) => {
+      if (onProgress)
+        onProgress(++done, files.length, name);
+    };
     for (const f of files) {
       if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-"))
         continue;
@@ -5280,19 +5367,25 @@ var RhymeDict = class {
       if (await adapter.exists(path)) {
         const stat = await adapter.stat(path);
         if (stat && stat.size === f.size) {
-          onProgress(++done, files.length, f.name);
+          step(f.name);
           continue;
         }
       }
-      const buf = await this.fetchChunked(base + f.name, f.size);
       try {
-        ungzip_1(new Uint8Array(buf));
+        const buf = await this.fetchChunked(base + f.name, f.size);
+        try {
+          ungzip_1(new Uint8Array(buf));
+        } catch (e) {
+          throw new Error(`corrupt download (bad gzip): ${f.name}`);
+        }
+        await adapter.writeBinary(path, buf);
       } catch (e) {
-        throw new Error(`corrupt download (bad gzip): ${f.name}`);
+        console.error(`Russian Rhymes: ${f.name} \u043D\u0435 \u0441\u043A\u0430\u0447\u0430\u043B\u0441\u044F`, e);
+        failed.push(f.name);
       }
-      await adapter.writeBinary(path, buf);
-      onProgress(++done, files.length, f.name);
+      step(f.name);
     }
+    return { total: files.length, failed };
   }
   /**
    * Скачать файл, дробя на Range-куски (~3 МБ), чтобы мобильный requestUrl не держал
@@ -5925,6 +6018,36 @@ var en = {
   dlProgress: "Downloading\u2026",
   dlDone: "Dictionary downloaded",
   dlFailed: "Download failed \u2014 check the URL and your connection.",
+  invFiles: "Dictionary files",
+  invDesc: "What is actually on disk. A missing file is not an error \u2014 the panel works without it, \u2014 but the matching section stays empty, so an interrupted download looks exactly like a working dictionary.",
+  invRefresh: "Check again",
+  invLoading: "Checking\u2026",
+  invMissing: "no file",
+  invBroken: "corrupt",
+  invTotal: "On disk:",
+  invHint: "Press \xABDownload\xBB: files already on disk are skipped.",
+  unitMb: "MB",
+  unitKb: "KB",
+  noticeMissingShards: "Dictionary files missing: ",
+  dlFailedFiles: "Failed to download: ",
+  shardWords: "Words and stress",
+  shardRhymes: "Rhymes",
+  shardForms: "Word forms",
+  shardDefinitions: "Definitions",
+  shardSynonyms: "Synonyms",
+  shardAntonyms: "Antonyms",
+  shardAssociations: "Associations",
+  shardHypernyms: "Hypernyms",
+  shardHyponyms: "Hyponyms",
+  shardRelated: "Related words",
+  shardIdioms: "Idioms",
+  shardProverbs: "Proverbs",
+  shardMetagrams: "Metagrams",
+  shardAnagrams: "Anagrams",
+  shardLemmas: "Lemmas",
+  shardPhrases: "Set phrases",
+  shardYo: "Yo restoration",
+  shardGenerator: "Word generator",
   copied: "Copied: ",
   copyFail: "Copy failed",
   inserted: "Inserted: ",
@@ -6062,6 +6185,36 @@ var ru = {
   dlProgress: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435\u2026",
   dlDone: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D",
   dlFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u2014 \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0430\u0434\u0440\u0435\u0441 \u0438 \u0438\u043D\u0442\u0435\u0440\u043D\u0435\u0442.",
+  invFiles: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
+  invDesc: "\u0427\u0442\u043E \u0440\u0435\u0430\u043B\u044C\u043D\u043E \u043B\u0435\u0436\u0438\u0442 \u043D\u0430 \u0434\u0438\u0441\u043A\u0435. \u041E\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0438\u0435 \u0444\u0430\u0439\u043B\u0430 \u2014 \u043D\u0435 \u043E\u0448\u0438\u0431\u043A\u0430, \u043F\u0430\u043D\u0435\u043B\u044C \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442 \u0438 \u0431\u0435\u0437 \u043D\u0435\u0433\u043E, \u2014 \u043D\u043E \u0440\u0430\u0437\u0434\u0435\u043B \u043E\u0441\u0442\u0430\u0451\u0442\u0441\u044F \u043F\u0443\u0441\u0442\u044B\u043C, \u0438 \u043E\u0431\u043E\u0440\u0432\u0430\u043D\u043D\u0430\u044F \u0437\u0430\u043A\u0430\u0447\u043A\u0430 \u0432\u044B\u0433\u043B\u044F\u0434\u0438\u0442 \u0442\u043E\u0447\u043D\u043E \u043A\u0430\u043A \u0438\u0441\u043F\u0440\u0430\u0432\u043D\u044B\u0439 \u0441\u043B\u043E\u0432\u0430\u0440\u044C.",
+  invRefresh: "\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u0437\u0430\u043D\u043E\u0432\u043E",
+  invLoading: "\u041F\u0440\u043E\u0432\u0435\u0440\u044F\u044E\u2026",
+  invMissing: "\u043D\u0435\u0442 \u0444\u0430\u0439\u043B\u0430",
+  invBroken: "\u043F\u043E\u0432\u0440\u0435\u0436\u0434\u0451\u043D",
+  invTotal: "\u041D\u0430 \u0434\u0438\u0441\u043A\u0435:",
+  invHint: "\u041D\u0430\u0436\u043C\u0438\u0442\u0435 \xAB\u0421\u043A\u0430\u0447\u0430\u0442\u044C\xBB: \u0443\u0436\u0435 \u0441\u043A\u0430\u0447\u0430\u043D\u043D\u044B\u0435 \u0444\u0430\u0439\u043B\u044B \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F.",
+  unitMb: "\u041C\u0411",
+  unitKb: "\u041A\u0411",
+  noticeMissingShards: "\u041D\u0435 \u0445\u0432\u0430\u0442\u0430\u0435\u0442 \u0444\u0430\u0439\u043B\u043E\u0432 \u0441\u043B\u043E\u0432\u0430\u0440\u044F: ",
+  dlFailedFiles: "\u041D\u0435 \u0441\u043A\u0430\u0447\u0430\u043B\u0438\u0441\u044C: ",
+  shardWords: "\u0421\u043B\u043E\u0432\u0430 \u0438 \u0443\u0434\u0430\u0440\u0435\u043D\u0438\u044F",
+  shardRhymes: "\u0420\u0438\u0444\u043C\u044B",
+  shardForms: "\u0424\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430",
+  shardDefinitions: "\u0417\u043D\u0430\u0447\u0435\u043D\u0438\u044F",
+  shardSynonyms: "\u0421\u0438\u043D\u043E\u043D\u0438\u043C\u044B",
+  shardAntonyms: "\u0410\u043D\u0442\u043E\u043D\u0438\u043C\u044B",
+  shardAssociations: "\u0410\u0441\u0441\u043E\u0446\u0438\u0430\u0446\u0438\u0438",
+  shardHypernyms: "\u0413\u0438\u043F\u0435\u0440\u043E\u043D\u0438\u043C\u044B",
+  shardHyponyms: "\u0413\u0438\u043F\u043E\u043D\u0438\u043C\u044B",
+  shardRelated: "\u0420\u043E\u0434\u0441\u0442\u0432\u0435\u043D\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430",
+  shardIdioms: "\u0418\u0434\u0438\u043E\u043C\u044B",
+  shardProverbs: "\u041F\u043E\u0441\u043B\u043E\u0432\u0438\u0446\u044B",
+  shardMetagrams: "\u041C\u0435\u0442\u0430\u0433\u0440\u0430\u043C\u043C\u044B",
+  shardAnagrams: "\u0410\u043D\u0430\u0433\u0440\u0430\u043C\u043C\u044B",
+  shardLemmas: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0435 \u0444\u043E\u0440\u043C\u044B",
+  shardPhrases: "\u0423\u0441\u0442\u043E\u0439\u0447\u0438\u0432\u044B\u0435 \u0441\u043E\u0447\u0435\u0442\u0430\u043D\u0438\u044F",
+  shardYo: "\u0401\u0444\u0438\u043A\u0430\u0446\u0438\u044F",
+  shardGenerator: "\u0413\u0435\u043D\u0435\u0440\u0430\u0442\u043E\u0440 \u0441\u043B\u043E\u0432",
   copied: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u043D\u043E: ",
   copyFail: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C",
   inserted: "\u0412\u0441\u0442\u0430\u0432\u043B\u0435\u043D\u043E: ",
@@ -6383,6 +6536,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       this.renderStatus(t("dictLoading"));
       await dict.load();
       this.plugin.warnBadDicts();
+      this.plugin.warnMissingShards();
     }
     if (dict.status === "missing" || dict.status === "error") {
       this.renderMissing();
@@ -6692,8 +6846,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
   async downloadFromPanel(btn, prog) {
     btn.disabled = true;
     prog.setText(t("dlProgress"));
-    const ok = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
-    if (ok) {
+    const res = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
+    if (res.ok) {
+      if (res.failed.length)
+        new import_obsidian3.Notice(t("dlFailedFiles") + res.failed.join(", "), 1e4);
       if (this.word)
         await this.showWord(this.word);
       else
@@ -7702,6 +7858,34 @@ var DEFAULT_SETTINGS = {
 };
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
+function shardTitle(name) {
+  const titles = {
+    words: t("shardWords"),
+    rhymes: t("shardRhymes"),
+    forms: t("shardForms"),
+    definitions: t("shardDefinitions"),
+    synonyms: t("shardSynonyms"),
+    antonyms: t("shardAntonyms"),
+    associations: t("shardAssociations"),
+    hypernyms: t("shardHypernyms"),
+    hyponyms: t("shardHyponyms"),
+    related: t("shardRelated"),
+    idioms: t("shardIdioms"),
+    proverbs: t("shardProverbs"),
+    metagrams: t("shardMetagrams"),
+    anagrams: t("shardAnagrams"),
+    lemmas: t("shardLemmas"),
+    phrases: t("shardPhrases"),
+    yo: t("shardYo"),
+    generator: t("shardGenerator")
+  };
+  return titles[name] || name;
+}
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("unitMb")}`;
+  return `${Math.max(1, Math.round(bytes / 1024))} ${t("unitKb")}`;
+}
 var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   constructor(app, manifest) {
     super(app, manifest);
@@ -7715,6 +7899,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     this.followSync = (0, import_obsidian4.debounce)(() => this.syncFromCursor(), FOLLOW_DELAY_MS, true);
     this.lastFollowKey = "";
     this.badWarned = "";
+    this.missingWarned = "";
   }
   async onload() {
     let _a;
@@ -7862,6 +8047,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       return Promise.resolve();
     return this.dict.load().then(() => {
       this.warnBadDicts();
+      this.warnMissingShards();
       if (mode === "full")
         return this.dict.loadHeavy();
     });
@@ -7910,6 +8096,19 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       return;
     this.badWarned = key;
     new import_obsidian4.Notice(t("noticeBadDicts") + key, 1e4);
+  }
+  /**
+   * Сказать про недостающие файлы самого словаря. Отсутствие шарда — не ошибка загрузки:
+   * панель работает и без пословиц. Но оборванная закачка выглядит точно так же, а вкладки
+   * при этом молча пусты — поэтому один раз называем, чего именно нет.
+   */
+  warnMissingShards() {
+    const missing = this.dict.missingShards;
+    const key = missing.join(",");
+    if (!missing.length || key === this.missingWarned)
+      return;
+    this.missingWarned = key;
+    new import_obsidian4.Notice(t("noticeMissingShards") + missing.map((n) => shardTitle(n)).join(", "), 1e4);
   }
   async saveSettings() {
     const data = { settings: this.settings, userStress: this.userStress, localDicts: this.localDicts };
@@ -8136,12 +8335,12 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
    */
   async downloadDict(onProgress) {
     try {
-      await this.dict.downloadDict(this.settings.dictUrl, onProgress);
+      const report = await this.dict.downloadDict(this.settings.dictUrl, onProgress);
       await this.dict.reloadAfterDownload();
-      return this.dict.status === "ready";
+      return { ok: this.dict.status === "ready", failed: report.failed };
     } catch (e) {
       console.error("Russian Rhymes: dict download failed", e);
-      return false;
+      return { ok: false, failed: [] };
     }
   }
 };
@@ -8199,7 +8398,8 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
             control: { type: "text", key: "dictUrl" }
           },
           { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
-          { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") }
+          { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") },
+          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) }
         ]
       },
       {
@@ -8256,11 +8456,15 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       btn.onClick(async () => {
         btn.setDisabled(true);
         const notice = new import_obsidian4.Notice(t("dlProgress"), 0);
-        const ok = await this.plugin.downloadDict((done, total) => notice.setMessage(`${t("dlProgress")} ${done}/${total}`));
+        const res = await this.plugin.downloadDict((done, total) => notice.setMessage(`${t("dlProgress")} ${done}/${total}`));
         notice.hide();
-        new import_obsidian4.Notice(ok ? t("dlDone") : t("dlFailed"));
+        if (res.failed.length)
+          new import_obsidian4.Notice(t("dlFailedFiles") + res.failed.join(", "), 1e4);
+        else
+          new import_obsidian4.Notice(res.ok ? t("dlDone") : t("dlFailed"));
         btn.setDisabled(false);
         this.plugin.refreshPanel();
+        this.update();
       });
     });
   }
@@ -8346,6 +8550,49 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         }
       ]
     };
+  }
+  /**
+   * Инвентарь словаря: что из двадцати файлов лежит на диске. Единственное место, где
+   * видно оборванную закачку — до этого недостающий шард просто оборачивался пустой
+   * вкладкой. Читается с диска, поэтому список заполняется после ответа, а не сразу.
+   */
+  renderInventory(setting, group) {
+    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
+    if (!host)
+      return;
+    const listEl = host.createDiv({ cls: "rr-shards" });
+    listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
+    const fill = () => {
+      void this.plugin.dict.inventory().then((inv) => {
+        listEl.empty();
+        this.fillInventory(listEl, inv);
+      });
+    };
+    setting.addExtraButton((btn) => {
+      btn.setIcon("refresh-cw").setTooltip(t("invRefresh"));
+      btn.onClick(() => fill());
+    });
+    fill();
+    return () => listEl.remove();
+  }
+  fillInventory(listEl, inv) {
+    let have = 0, bytes = 0;
+    for (const s of inv) {
+      const row = listEl.createDiv({ cls: "rr-shardrow" });
+      row.createSpan({ cls: "rr-shard-name", text: shardTitle(s.name) });
+      if (s.present && !s.broken) {
+        have++;
+        bytes += s.size;
+        row.createSpan({ cls: "rr-shard-size", text: fmtSize(s.size) });
+      } else {
+        row.addClass("rr-shard-bad");
+        row.createSpan({ cls: "rr-shard-size", text: s.broken ? t("invBroken") : t("invMissing") });
+      }
+    }
+    const total = listEl.createDiv({ cls: "rr-shard-note" });
+    total.setText(`${t("invTotal")} ${have}/${inv.length} \xB7 ${fmtSize(bytes)}`);
+    if (have < inv.length)
+      listEl.createDiv({ cls: "rr-shard-note rr-shard-bad", text: t("invHint") });
   }
   renderDictSection(setting, group, kind, dicts) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });

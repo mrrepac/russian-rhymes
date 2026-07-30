@@ -116,6 +116,33 @@ interface DictFile {
   name: string;
   size: number;
 }
+/**
+ * Из чего состоит словарь. Один список на три задачи: по нему идёт загрузка, по нему же
+ * настройки показывают, что лежит на диске, и по нему считается, о чём предупредить.
+ * Раньше набор имён жил внутри doLoad, и узнать со стороны, каких файлов не хватает,
+ * было неоткуда — оборванная закачка давала рабочую на вид панель без значений.
+ */
+export interface ShardSpec {
+  name: string; // ключ шарда: по нему настройки берут название
+  variants: string[][]; // годные наборы файлов по убыванию предпочтения (блоки, целый файл)
+  required?: boolean; // без него панель не работает вовсе
+  heavy?: boolean; // вторая волна: грузится по требованию, а не при старте
+  load?: (raw: string) => void; // куда девать распакованный текст; нет — грузится отдельно
+}
+/** Строка инвентаря: что этот шард даёт и лежит ли он на диске. */
+export interface ShardInfo {
+  name: string;
+  present: boolean;
+  broken: boolean; // файл на месте, но не распаковался
+  size: number; // байты на диске
+  required: boolean;
+  files: string[]; // какие файлы нашлись (или каких ждали, если не нашлись)
+}
+/** Итог закачки: сколько файлов в списке и какие не дошли. */
+export interface DownloadReport {
+  total: number;
+  failed: string[];
+}
 /** Ряды из личного словаря синонимов — своим блоком во вкладке «Ассоциации». */
 export interface LocalSynDict {
   id: string;
@@ -212,6 +239,8 @@ const RhymeDict = class {
   blockCache: Map<string, string>;
   rhymeSkel: string[] | null;
   rhymeKeyEnd: Uint32Array | null;
+  missingShards: string[];
+  badShards: Set<string>;
 
   constructor(app: App, pluginDir: string) {
     this.app = app;
@@ -257,6 +286,10 @@ const RhymeDict = class {
     // id личных словарей, чей файл на месте, но не распаковался: удалять такое нельзя,
     // а показывать число слов из настроек — врать, будто словарь работает
     this.localBad = /* @__PURE__ */ new Set();
+    // чего не хватило при загрузке и что лежит битым: без этого недостающий шард молча
+    // превращался в пустую вкладку, а причину нельзя было увидеть нигде
+    this.missingShards = [];
+    this.badShards = /* @__PURE__ */ new Set();
     this.manifest = [];
     this.localOrder = [];
     this.loading = null;
@@ -443,6 +476,103 @@ const RhymeDict = class {
     }
     this.heavyStatus = "ready";
   }
+  /**
+   * Состав словаря. Порядок — как в панели: сначала то, без чего она не работает,
+   * потом вкладки, потом служебное. Шарды второй волны идут с blocks-вариантом первым:
+   * блочная пара и есть то, что кладётся в релиз, а целый .txt.gz остался для старых
+   * установок. load не задан там, где шард грузится не через buildIndex (вторая волна).
+   */
+  shardSpecs(): ShardSpec[] {
+    return [
+      // words и rhymes читает doLoad отдельно: без любого из них словарь считается
+      // отсутствующим, поэтому решение принимается до разбора остальных файлов
+      { name: "words", variants: [["words.txt.gz"]], required: true },
+      { name: "rhymes", variants: [["rhymes.txt.gz"]], required: true },
+      { name: "forms", variants: [["forms.blk.gz", "forms.blkidx.gz"], ["forms.blk.gz"], ["forms.txt.gz"]], heavy: true },
+      {
+        name: "definitions",
+        variants: [["definitions.blk.gz", "definitions.blkidx.gz"], ["definitions.blk.gz"], ["definitions.txt.gz"]],
+        heavy: true
+      },
+      { name: "synonyms", variants: [["synonyms.txt.gz"]], load: (raw) => this.syns = buildIndex(raw) },
+      { name: "antonyms", variants: [["antonyms.txt.gz"]], load: (raw) => this.ants = buildIndex(raw) },
+      { name: "associations", variants: [["associations.txt.gz"]], load: (raw) => this.assoc = buildIndex(raw) },
+      { name: "hypernyms", variants: [["hypernyms.txt.gz"]], load: (raw) => this.hyper = buildIndex(raw) },
+      { name: "hyponyms", variants: [["hyponyms.txt.gz"]], load: (raw) => this.hypo = buildIndex(raw) },
+      { name: "related", variants: [["related.txt.gz"]], load: (raw) => this.related = buildIndex(raw) },
+      { name: "idioms", variants: [["idioms.txt.gz"]], load: (raw) => this.idioms = buildIndex(raw) },
+      { name: "proverbs", variants: [["proverbs.txt.gz"]], load: (raw) => this.proverbs = buildIndex(raw) },
+      { name: "metagrams", variants: [["metagrams.txt.gz"]], load: (raw) => this.metagrams = buildIndex(raw) },
+      { name: "anagrams", variants: [["anagrams.txt.gz"]], load: (raw) => this.anagrams = buildIndex(raw) },
+      { name: "lemmas", variants: [["lemmas.txt.gz"]], load: (raw) => this.lemmas = buildIndex(raw) },
+      { name: "phrases", variants: [["phrases.txt.gz"]], load: (raw) => this.phrasesIdx = buildIndex(raw) },
+      { name: "yo", variants: [["yo.txt.gz"]], load: (raw) => this.parseYo(raw) },
+      { name: "generator", variants: [["generator.txt.gz"]], load: (raw) => this.gen = this.parseGenerator(raw) }
+    ];
+  }
+  /**
+   * Что из словаря реально лежит на диске. Загрузка недостающий шард пропускает молча —
+   * и правильно делает, без пословиц словарь работает, — но тогда единственное место,
+   * где видно недостачу, это вот этот список в настройках.
+   */
+  async inventory(): Promise<ShardInfo[]> {
+    if (!this.activeDictDir)
+      await this.resolveDictDir();
+    const out: ShardInfo[] = [];
+    for (const spec of this.shardSpecs()) {
+      const info: ShardInfo = {
+        name: spec.name,
+        present: false,
+        broken: this.badShards.has(spec.name),
+        size: 0,
+        required: !!spec.required,
+        files: spec.variants[0]
+      };
+      for (const variant of spec.variants) {
+        let size = 0, all = true;
+        for (const file of variant) {
+          const bytes = await this.fileSize(this.dictPath(file));
+          if (bytes === null) {
+            all = false;
+            break;
+          }
+          size += bytes;
+        }
+        if (all) {
+          info.present = true;
+          info.size = size;
+          info.files = variant;
+          break;
+        }
+      }
+      out.push(info);
+    }
+    return out;
+  }
+  /** Размер файла или null, если файла нет. stat есть не у всякой заглушки — как и getResourcePath. */
+  async fileSize(path: string) {
+    const adapter = this.app.vault.adapter;
+    if (!await adapter.exists(path))
+      return null;
+    if (typeof adapter.stat !== "function")
+      return 0;
+    const st = await adapter.stat(path);
+    return st ? st.size : 0;
+  }
+  /** Имена шардов, которых не хватает: считается после загрузки, показывается в настройках. */
+  async refreshMissing() {
+    const inv = await this.inventory();
+    this.missingShards = inv.filter((s) => !s.present || s.broken).map((s) => s.name);
+    return this.missingShards;
+  }
+  /** Ёфикация ввода: е-написание -> однозначная ё-версия. */
+  parseYo(raw: string) {
+    for (const line of raw.split("\n")) {
+      const tab = line.indexOf("	");
+      if (tab > 0)
+        this.yoMap.set(line.slice(0, tab), line.slice(tab + 1));
+    }
+  }
   readGz(name: string) {
     // файл основного словаря качается заново по кнопке, поэтому битый можно снести
     // Битый шард можно снести — он качается заново по кнопке. Но НЕ когда словарь лежит
@@ -498,38 +628,20 @@ const RhymeDict = class {
     this.blockCache.clear();
     for (const name of HEAVY_SHARDS)
       await this.loadBlockIndex(name);
-    // объектами, а не парами: у массива пар TS выводит на элемент union «строка | функция»,
-    // и set(...) ниже перестаёт быть вызываемым (то же было со списком тяжёлых шардов)
-    const opt = [
-      { name: "synonyms.txt.gz", set: (i: TextIndex) => this.syns = i },
-      { name: "antonyms.txt.gz", set: (i: TextIndex) => this.ants = i },
-      { name: "associations.txt.gz", set: (i: TextIndex) => this.assoc = i },
-      { name: "hypernyms.txt.gz", set: (i: TextIndex) => this.hyper = i },
-      { name: "hyponyms.txt.gz", set: (i: TextIndex) => this.hypo = i },
-      { name: "related.txt.gz", set: (i: TextIndex) => this.related = i },
-      { name: "idioms.txt.gz", set: (i: TextIndex) => this.idioms = i },
-      { name: "proverbs.txt.gz", set: (i: TextIndex) => this.proverbs = i },
-      { name: "metagrams.txt.gz", set: (i: TextIndex) => this.metagrams = i },
-      { name: "anagrams.txt.gz", set: (i: TextIndex) => this.anagrams = i },
-      { name: "lemmas.txt.gz", set: (i: TextIndex) => this.lemmas = i },
-      { name: "phrases.txt.gz", set: (i: TextIndex) => this.phrasesIdx = i }
-    ];
-    for (const { name, set } of opt) {
-      const raw = await this.readGz(name);
+    // остальные шарды необязательны: без пословиц или анаграмм словарь работает, просто
+    // без этой вкладки. Но файл, который лежит и не читается, — это поломка, а не «нет
+    // такого раздела»: такой шард запоминаем, настройки показывают его отдельной строкой
+    this.badShards.clear();
+    for (const spec of this.shardSpecs()) {
+      if (spec.required || spec.heavy || !spec.load)
+        continue;
+      const file = spec.variants[0][0];
+      const raw = await this.readGz(file);
       if (raw !== null)
-        set(buildIndex(raw));
+        spec.load(raw);
+      else if (await this.fileSize(this.dictPath(file)) !== null)
+        this.badShards.add(spec.name);
     }
-    const yoRaw = await this.readGz("yo.txt.gz");
-    if (yoRaw !== null) {
-      for (const line of yoRaw.split("\n")) {
-        const tab = line.indexOf("	");
-        if (tab > 0)
-          this.yoMap.set(line.slice(0, tab), line.slice(tab + 1));
-      }
-    }
-    const genRaw = await this.readGz("generator.txt.gz");
-    if (genRaw !== null)
-      this.gen = this.parseGenerator(genRaw);
     await this.relocateLocalDicts("");
     this.localBad.clear();
     for (const d of this.manifest) {
@@ -541,6 +653,9 @@ const RhymeDict = class {
       else if (await this.localFileExists(d.id))
         this.localBad.add(d.id);
     }
+    // «готов» словарь и с недостачей: без анаграмм он работает. Но чего именно не хватает,
+    // теперь известно — и об этом говорят вслух, а не оставляют пустую вкладку без причины
+    await this.refreshMissing();
     this.status = "ready";
   }
   /**
@@ -690,9 +805,10 @@ const RhymeDict = class {
   /**
    * Скачать файлы словаря с baseUrl (GitHub-релиз) в папку dict/. Личные словари
    * (local-*) не трогаются. Возобновляемо: уже скачанный файл нужного размера
-   * пропускается. onProgress(done, total, name) — для индикатора.
+   * пропускается. onProgress(done, total, name) — для индикатора. Возвращает отчёт:
+   * недошедшие файлы названы поимённо, а не превращаются в одно «не удалось скачать».
    */
-  async downloadDict(baseUrl: string, onProgress?: (done: number, total: number, name: string) => void) {
+  async downloadDict(baseUrl: string, onProgress?: (done: number, total: number, name: string) => void): Promise<DownloadReport> {
     const adapter = this.app.vault.adapter;
     // качаем сразу в папку из настроек: если словарь живёт в хранилище, скачанное
     // тут же поедет синхронизацией на остальные устройства
@@ -705,6 +821,11 @@ const RhymeDict = class {
     if (!isDictFileList(files) || files.length === 0)
       throw new Error("empty files.json");
     let done = 0;
+    const failed: string[] = [];
+    const step = (name: string) => {
+      if (onProgress)
+        onProgress(++done, files.length, name);
+    };
     for (const f of files) {
       // .blk.gz — блочный шард, .blkidx.gz — его индекс; без них словарь не доедет до телефона
       if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-"))
@@ -713,19 +834,28 @@ const RhymeDict = class {
       if (await adapter.exists(path)) {
         const stat = await adapter.stat(path);
         if (stat && stat.size === f.size) {
-          onProgress(++done, files.length, f.name);
+          step(f.name);
           continue;
         }
       }
-      const buf = await this.fetchChunked(base + f.name, f.size);
+      // одна неудача не обрывает остальные: раньше закачка падала на первом же сбое,
+      // и на телефоне это давало половину словаря — с рабочими рифмами, без значений
+      // и без единого слова о том, что случилось
       try {
-        ungzip_1(new Uint8Array(buf));
-      } catch {
-        throw new Error(`corrupt download (bad gzip): ${f.name}`);
+        const buf = await this.fetchChunked(base + f.name, f.size);
+        try {
+          ungzip_1(new Uint8Array(buf));
+        } catch {
+          throw new Error(`corrupt download (bad gzip): ${f.name}`);
+        }
+        await adapter.writeBinary(path, buf);
+      } catch (e) {
+        console.error(`Russian Rhymes: ${f.name} не скачался`, e);
+        failed.push(f.name);
       }
-      await adapter.writeBinary(path, buf);
-      onProgress(++done, files.length, f.name);
+      step(f.name);
     }
+    return { total: files.length, failed };
   }
   /**
    * Скачать файл, дробя на Range-куски (~3 МБ), чтобы мобильный requestUrl не держал
