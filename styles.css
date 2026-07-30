@@ -104,20 +104,21 @@
   height: 16px;
 }
 
-.rr-search .rr-input,
-.rr-search .rr-input:hover,
-/* !important здесь перекрывает СОБСТВЕННЫЙ хром Obsidian для input[type=text]
-   (высокая специфичность встроенных стилей) — иначе «рамка в рамке» вокруг поля
-   поиска. Это документированное исключение из «no !important». */
-.rr-search .rr-input:focus,
-.rr-search .rr-input:focus-visible,
-.rr-search .rr-input:active {
+/* Рамку, фон и кольцо фокуса рисует контейнер rr-search, поэтому у самого input'а
+   хром обнуляется — иначе вокруг поля поиска видна «рамка в рамке». Селектор нарочно
+   длиннее необходимого: вес (0,3,1) перебивает и собственные правила Obsidian для
+   текстовых полей, и правила тем, а !important каталог запрещает. */
+.rr-panel .rr-search input.rr-input,
+.rr-panel .rr-search input.rr-input:hover,
+.rr-panel .rr-search input.rr-input:focus,
+.rr-panel .rr-search input.rr-input:focus-visible,
+.rr-panel .rr-search input.rr-input:active {
   flex: 1;
   min-width: 0;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  outline: none !important;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
   font-size: var(--font-ui-medium);
   padding: var(--size-4-1) 0;
 }
@@ -898,28 +899,29 @@
   height: 16px;
 }
 
-/* как и у поля поиска: перекрываем встроенный хром Obsidian для input[type=text]
-   (документированное исключение из «no !important») */
-.rr-dictrow input.rr-dictname {
+/* Имя словаря переименовывается прямо в строке, поэтому поле выглядит как текст и
+   оживает только под курсором. Селектор с .rr-dictlist — та же причина, что у поля
+   поиска: перебить хром Obsidian для input[type=text], не прибегая к !important */
+.rr-dictlist .rr-dictrow input.rr-dictname {
   flex: 1;
   min-width: 0;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  border: none;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-normal);
   font-size: var(--font-ui-small);
   padding: var(--size-2-1) var(--size-2-2);
   border-radius: var(--radius-s);
 }
 
-.rr-dictrow input.rr-dictname:hover {
-  background: var(--background-modifier-hover) !important;
+.rr-dictlist .rr-dictrow input.rr-dictname:hover {
+  background: var(--background-modifier-hover);
 }
 
-.rr-dictrow input.rr-dictname:focus {
-  background: var(--background-primary) !important;
-  box-shadow: 0 0 0 1px var(--background-modifier-border-focus) !important;
-  outline: none !important;
+.rr-dictlist .rr-dictrow input.rr-dictname:focus {
+  background: var(--background-primary);
+  box-shadow: 0 0 0 1px var(--background-modifier-border-focus);
+  outline: none;
 }
 
 /* счётчик слов ужимается и обрезается: при «нет файла» и узком окне настроек
