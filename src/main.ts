@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, Plugin, PluginSettingTab, Setting, ToggleComponent, debounce, setIcon } from "obsidian";
+import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
@@ -480,42 +480,110 @@ const RhymesSettingTab = class extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    new Setting(containerEl).setName(t("settingDouble")).setDesc(t("settingDoubleDesc")).addText((text) => {
-      text.inputEl.type = "number";
-      text.setPlaceholder(String(DEFAULT_SETTINGS.doubleCopyMs)).setValue(String(this.plugin.settings.doubleCopyMs)).onChange(async (v) => {
-        const n = parseInt(v, 10);
-        this.plugin.settings.doubleCopyMs = Number.isFinite(n) && n >= 0 ? Math.min(n, 2e3) : DEFAULT_SETTINGS.doubleCopyMs;
-        await this.plugin.saveSettings();
-      });
-    });
-    new Setting(containerEl).setName(t("settingFollow")).setDesc(t("settingFollowDesc")).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.followCursor).onChange(async (v) => {
-        await this.plugin.setFollow(v);
-      })
-    );
-    new Setting(containerEl).setName(t("settingStartup")).setDesc(t("settingStartupDesc")).addDropdown((dd) => {
-      dd.addOption("none", t("startupNone"));
-      dd.addOption("rhymes", t("startupRhymes"));
-      dd.addOption("full", t("startupFull"));
-      dd.setValue(this.plugin.startupMode()).onChange(async (v) => {
-        this.plugin.settings.startupLoad = STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
-        await this.plugin.saveSettings();
-        // добавить в память можно сразу, освободить — только перезапуском
-        if (this.plugin.settings.startupLoad === "full")
-          void this.plugin.dict.loadHeavy();
-      });
-    });
-    new Setting(containerEl).setName(t("dlHeading")).setHeading();
-    new Setting(containerEl).setName(t("settingUrl")).setDesc(t("settingUrlDesc")).addText(
-      (text) => text.setValue(this.plugin.settings.dictUrl).onChange(async (v) => {
-        this.plugin.settings.dictUrl = v.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new Setting(containerEl).setName(t("dlDict")).setDesc(t("dlDesc")).addButton((btn) => {
+  /**
+   * Настройки объявлены декларативно (Obsidian 1.13+): приложение рисует их само и,
+   * главное, находит поиском по настройкам. display() здесь больше нет — при непустом
+   * getSettingDefinitions() Obsidian его и не вызывает, а с 1.13 он ещё и устаревший.
+   *
+   * Императивными (через render) остались только те строки, которым декларативной формы
+   * не хватает: кнопка скачивания гасит себя на время работы, поля папок применяются
+   * по потере фокуса, а списки личных словарей — это не настройки, а данные
+   * пользователя со своим переименованием, тумблерами и перетаскиванием.
+   */
+  getSettingDefinitions() {
+    return [
+      {
+        name: t("settingDouble"),
+        desc: t("settingDoubleDesc"),
+        control: {
+          type: "number",
+          key: "doubleCopyMs",
+          defaultValue: DEFAULT_SETTINGS.doubleCopyMs,
+          placeholder: String(DEFAULT_SETTINGS.doubleCopyMs),
+          min: 0,
+          max: 2e3
+        }
+      },
+      {
+        name: t("settingFollow"),
+        desc: t("settingFollowDesc"),
+        control: { type: "toggle", key: "followCursor" }
+      },
+      {
+        name: t("settingStartup"),
+        desc: t("settingStartupDesc"),
+        control: {
+          type: "dropdown",
+          key: "startupLoad",
+          defaultValue: DEFAULT_SETTINGS.startupLoad,
+          options: { none: t("startupNone"), rhymes: t("startupRhymes"), full: t("startupFull") }
+        }
+      },
+      {
+        type: "group",
+        heading: t("dlHeading"),
+        items: [
+          {
+            name: t("settingUrl"),
+            desc: t("settingUrlDesc"),
+            control: { type: "text", key: "dictUrl" }
+          },
+          { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
+          { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") }
+        ]
+      },
+      {
+        type: "group",
+        heading: t("locHeading"),
+        items: [
+          { name: t("locFolder"), desc: t("locFolderDesc"), render: (setting) => this.renderFolder(setting, "local") },
+          {
+            name: t("locHideDir"),
+            desc: t("locHideDirDesc"),
+            control: { type: "toggle", key: "hideDictDir" }
+          }
+        ]
+      },
+      this.dictSection("defs", t("locDefs"), t("locReorderHint")),
+      this.dictSection("syns", t("locSyns"), t("locSynsHint"))
+    ];
+  }
+  /** startupLoad валидируем: data.json правят руками. Остальное читается как есть. */
+  getControlValue(key) {
+    if (key === "startupLoad")
+      return this.plugin.startupMode();
+    return this.plugin.settings[key];
+  }
+  /**
+   * Базовая реализация только пишет значение в plugin.settings, а половине настроек
+   * нужны побочные действия — они и собраны здесь.
+   */
+  async setControlValue(key, value) {
+    // setFollow сам пишет настройку и сохраняет: поднимает панель, обновляет кнопку, грузит словарь
+    if (key === "followCursor") {
+      await this.plugin.setFollow(!!value);
+      return;
+    }
+    let v = value;
+    if (key === "doubleCopyMs") {
+      const n = Number(v);
+      v = Number.isFinite(n) && n >= 0 ? Math.min(n, 2e3) : DEFAULT_SETTINGS.doubleCopyMs;
+    }
+    if (key === "dictUrl")
+      v = String(v).trim();
+    if (key === "startupLoad")
+      v = STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
+    this.plugin.settings[key] = v;
+    await this.plugin.saveSettings();
+    if (key === "hideDictDir")
+      this.plugin.applyDictDirStyle();
+    // добавить в память можно сразу, освободить — только перезапуском
+    if (key === "startupLoad" && v === "full")
+      void this.plugin.dict.loadHeavy();
+  }
+  /** Кнопка скачивания словаря: гасится на время работы, прогресс идёт в Notice. */
+  renderDownload(setting) {
+    setting.addButton((btn) => {
       btn.setButtonText(t("dlBtn")).setCta();
       btn.onClick(async () => {
         btn.setDisabled(true);
@@ -527,25 +595,24 @@ const RhymesSettingTab = class extends PluginSettingTab {
         this.plugin.refreshPanel();
       });
     });
-    new Setting(containerEl).setName(t("mainFolder")).setDesc(t("mainFolderDesc")).addText((text) => {
-      text.setPlaceholder(t("mainFolderHint")).setValue(this.plugin.settings.mainDictDir);
-      // переезд по потере фокуса: на каждый символ он заводил бы папки «С», «Сл», «Сло»…
-      text.inputEl.addEventListener("blur", () => void this.changeMainFolder(text.getValue()));
+  }
+  /**
+   * Поле папки словарей. Применяется по потере фокуса, а не на каждый символ: иначе
+   * по дороге завелись бы папки «С», «Сл», «Сло»… Ровно поэтому тут не декларативный
+   * text — тот пишет значение на каждое изменение.
+   */
+  renderFolder(setting, which) {
+    const main = which === "main";
+    setting.addText((text) => {
+      text.setPlaceholder(main ? t("mainFolderHint") : DEFAULT_SETTINGS.localDictDir);
+      text.setValue(main ? this.plugin.settings.mainDictDir : this.plugin.settings.localDictDir);
+      text.inputEl.addEventListener("blur", () => {
+        if (main)
+          void this.changeMainFolder(text.getValue());
+        else
+          void this.changeDictFolder(text.getValue());
+      });
     });
-    new Setting(containerEl).setName(t("locHeading")).setHeading();
-    new Setting(containerEl).setName(t("locFolder")).setDesc(t("locFolderDesc")).addText((text) => {
-      text.setPlaceholder(DEFAULT_SETTINGS.localDictDir).setValue(this.plugin.settings.localDictDir);
-      // переносим по потере фокуса, а не на каждый символ: иначе папка заводилась бы на «С», «Сл», «Сло»…
-      text.inputEl.addEventListener("blur", () => void this.changeDictFolder(text.getValue()));
-    });
-    new Setting(containerEl).setName(t("locHideDir")).setDesc(t("locHideDirDesc")).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.hideDictDir).onChange(async (v) => {
-        this.plugin.settings.hideDictDir = v;
-        await this.plugin.saveSettings();
-        this.plugin.applyDictDirStyle();
-      })
-    );
-    this.renderDefsSection(containerEl);
   }
   /**
    * Сменить папку основного словаря и перетащить туда файлы. Это десятки мегабайт,
@@ -592,16 +659,27 @@ const RhymesSettingTab = class extends PluginSettingTab {
       console.error("Russian Rhymes: moving personal dictionaries failed", e);
       new Notice(t("locMoveFail"));
     }
-    this.display();
+    this.update();
   }
-  renderDefsSection(containerEl) {
-    this.renderDictSection(containerEl, "defs", t("locDefs"), t("locReorderHint"));
-    this.renderDictSection(containerEl, "syns", t("locSyns"), t("locSynsHint"));
-  }
-  /** Список словарей одного вида: толковые идут в «Значение», синонимические — в «Синонимы». */
-  renderDictSection(containerEl, kind, title, hint) {
+  /**
+   * Секция личных словарей одного вида: толковые идут в «Значение», синонимические —
+   * в «Синонимы». Это данные пользователя, а не настройки, поэтому декларативной формы
+   * тут нет: у строк своё переименование, тумблер, удаление и перетаскивание.
+   */
+  dictSection(kind, title, hint) {
     const dicts = this.plugin.localDicts.filter((d) => (d.kind === "syns" ? "syns" : "defs") === kind);
-    const setting = new Setting(containerEl).setName(title).setDesc(dicts.length ? hint : t("locEmpty"));
+    return {
+      type: "group",
+      items: [
+        {
+          name: title,
+          desc: dicts.length ? hint : t("locEmpty"),
+          render: (setting, group) => this.renderDictSection(setting, group, kind, dicts)
+        }
+      ]
+    };
+  }
+  renderDictSection(setting, group, kind, dicts) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });
     const fileInput = label.createEl("input", {
       cls: "rr-file-hidden",
@@ -615,8 +693,15 @@ const RhymesSettingTab = class extends PluginSettingTab {
     });
     if (!dicts.length)
       return;
-    const listEl = containerEl.createDiv({ cls: "rr-dictlist" });
+    // список ложится в контейнер группы, под строку с заголовком и кнопкой ввоза
+    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
+    if (!host)
+      return;
+    const listEl = host.createDiv({ cls: "rr-dictlist" });
     this.fillDictList(listEl, dicts);
+    // строку могут перерисовать в одиночку, а список висит рядом с ней, не внутри:
+    // без уборки он остался бы и продублировался
+    return () => listEl.remove();
   }
   /** Список личных словарей: строки с ручкой перетаскивания, именем, счётчиком и удалением. */
   fillDictList(listEl, dicts) {
@@ -674,7 +759,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
         this.plugin.syncLocalManifest();
         await this.plugin.saveSettings();
         this.plugin.refreshPanel();
-        this.display();
+        this.update();
       });
       row.addEventListener("dragstart", (e) => {
         let _a;
@@ -732,7 +817,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     this.plugin.syncLocalManifest();
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.display();
+    this.update();
   }
   async importFiles(files, kind) {
     new Notice(t("noticeConverting"));
@@ -761,7 +846,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     }
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.display();
+    this.update();
   }
 };
 export default RussianRhymesPlugin;
