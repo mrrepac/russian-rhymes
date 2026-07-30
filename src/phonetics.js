@@ -1,4 +1,9 @@
 const VOWELS = "\u0430\u0435\u0451\u0438\u043E\u0443\u044B\u044D\u044E\u044F";
+/**
+ * \u0413\u043B\u0430\u0441\u043D\u044B\u0439 \u0441\u043A\u0435\u043B\u0435\u0442 \u0441\u043B\u043E\u0432\u0430 \u2014 \u043F\u043E \u043D\u0435\u043C\u0443 \u0438\u0449\u0443\u0442\u0441\u044F \u0430\u0441\u0441\u043E\u043D\u0430\u043D\u0441\u044B.
+ * @param {string} s
+ * @returns {string}
+ */
 function vowelSkeleton(s) {
   let out = "";
   for (const c of s)
@@ -6,6 +11,7 @@ function vowelSkeleton(s) {
       out += c;
   return out;
 }
+/** @type {Record<string, string>} */
 const CONS_CLASS = {
   \u043F: "T",
   \u0431: "T",
@@ -29,6 +35,11 @@ const CONS_CLASS = {
   \u0440: "L",
   \u0439: "J"
 };
+/**
+ * Согласный скелет: каждая согласная заменена классом (взрывные, шипящие…).
+ * @param {string} s
+ * @returns {string}
+ */
 function consonantSkeleton(s) {
   let out = "";
   for (const c of s) {
@@ -38,6 +49,10 @@ function consonantSkeleton(s) {
   }
   return out;
 }
+/**
+ * @param {string} w
+ * @returns {number}
+ */
 function countSyllables(w) {
   let n = 0;
   for (const c of w)
@@ -45,6 +60,7 @@ function countSyllables(w) {
       n++;
   return n;
 }
+/** @type {Record<string, string>} */
 const DEVOICE = { \u0431: "\u043F", \u0432: "\u0444", \u0433: "\u043A", \u0434: "\u0442", \u0436: "\u0448", \u0437: "\u0441" };
 const VOICELESS = "\u043F\u0444\u043A\u0442\u0448\u0441\u0445\u0446\u0447\u0449";
 const OGO_KEEP_G = /* @__PURE__ */ new Set([
@@ -61,6 +77,13 @@ const OGO_KEEP_G = /* @__PURE__ */ new Set([
   "\u043F\u043E\u043B\u043E\u0433\u043E",
   "\u043E\u0442\u043B\u043E\u0433\u043E"
 ]);
+/**
+ * Рифм-ключ слова: хвост от ударной гласной, приведённый к произношению
+ * (оглушение, ться→ца, ого→ово), плюс опорная согласная перед ударным слогом.
+ * @param {string} word
+ * @param {number} stressIdx индекс ударной гласной
+ * @returns {{ key: string, support: string }}
+ */
 function rhymeKey(word, stressIdx) {
   let tail = word.slice(stressIdx);
   const head = word.slice(0, stressIdx);
@@ -113,6 +136,12 @@ function rhymeKey(word, stressIdx) {
   }
   return { key, support };
 }
+/**
+ * Поставить знак ударения после указанной гласной. Односложные и «ё» не трогаем.
+ * @param {string} word
+ * @param {number} stressIdx
+ * @returns {string}
+ */
 function markStress(word, stressIdx) {
   if (countSyllables(word) < 2)
     return word;
@@ -128,6 +157,9 @@ function markStress(word, stressIdx) {
  * корни с общим началом: весна/весла, весна/веса — нормальные рифмы.
  * Хвостовое вхождение (мороз/роз, окно/но, сон/персон) однокоренным НЕ считается:
  * раньше оно выбрасывалось скопом и уносило половину самых певучих рифм.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
  */
 function looksSameRoot(a, b) {
   let i = 0;
@@ -146,6 +178,9 @@ const VERB_PREFIXES = /* @__PURE__ */ new Set([
  * Проверка только для глаголов и только по списку приставок: у глаголов приставка —
  * закрытый класс, поэтому случайные совпадения (петь/терпеть, жить/служить, пить/купить)
  * сюда не попадают, а у существительных так нельзя — до/рога и по/года разного корня.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
  */
 function prefixVerbPair(a, b) {
   const short = a.length <= b.length ? a : b;
@@ -154,6 +189,11 @@ function prefixVerbPair(a, b) {
     return false;
   return VERB_PREFIXES.has(long.slice(0, long.length - short.length));
 }
+/**
+ * Начальный согласный кластер — по нему ищутся аллитерации.
+ * @param {string} word
+ * @returns {string}
+ */
 function alliterationPrefix(word) {
   if (!word)
     return "";

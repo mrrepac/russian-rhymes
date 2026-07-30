@@ -7,7 +7,7 @@ import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
 import { convertDsl } from "./dsl";
 
 /** Настройки плагина, как они лежат в data.json. */
-interface RhymesSettings {
+export interface RhymesSettings {
   doubleCopyMs: number; // 0 = выключено
   /** Видимые лексические слои: [базовая, частотная, обычная, редкая]. */
   lexShow: boolean[];
@@ -28,6 +28,12 @@ interface RhymesSettings {
   // из старых версий: читаются один раз при загрузке и удаляются
   showRare?: boolean;
   pageSize?: number;
+}
+/** Содержимое data.json целиком. Всё необязательно: файл переживает версии и правки руками. */
+interface PersistedData {
+  settings?: Partial<RhymesSettings>;
+  userStress?: Record<string, number>;
+  localDicts?: LocalDict[];
 }
 
 const DEFAULT_SETTINGS = {
@@ -240,7 +246,8 @@ const RussianRhymesPlugin = class extends Plugin {
   }
   async loadSettings() {
     let _a;
-    const data = await this.loadData();
+    // data.json пишем мы сами, но правят его и руками, поэтому форма — «может быть, есть»
+    const data = await this.loadData() as PersistedData | null;
     if (data && data.settings) {
       this.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings);
       this.userStress = (_a = data.userStress) != null ? _a : {};
@@ -799,14 +806,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
       });
       const del = row.createSpan({ cls: "rr-dictdel", attr: { "aria-label": t("btnClear") } });
       setIcon(del, "trash");
-      del.addEventListener("click", async () => {
-        await this.plugin.dict.deleteDict(d.id);
-        this.plugin.localDicts = this.plugin.localDicts.filter((x) => x.id !== d.id);
-        this.plugin.syncLocalManifest();
-        await this.plugin.saveSettings();
-        this.plugin.refreshPanel();
-        this.update();
-      });
+      del.addEventListener("click", () => void this.removeDict(d.id));
       row.addEventListener("dragstart", (e: DragEvent) => {
         let _a;
         dragId = d.id;
@@ -837,6 +837,15 @@ const RhymesSettingTab = class extends PluginSettingTab {
         dragId = null;
       });
     }
+  }
+  /** Удалить личный словарь: файл с диска, строку из списка и из манифеста. */
+  async removeDict(id: string) {
+    await this.plugin.dict.deleteDict(id);
+    this.plugin.localDicts = this.plugin.localDicts.filter((x) => x.id !== id);
+    this.plugin.syncLocalManifest();
+    await this.plugin.saveSettings();
+    this.plugin.refreshPanel();
+    this.update();
   }
   /** Переставить словарь fromId на место targetId и сохранить порядок. */
   async moveDict(fromId: string, targetId: string) {

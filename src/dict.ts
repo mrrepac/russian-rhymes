@@ -263,7 +263,7 @@ const RhymeDict = class {
   }
   /** Ленивая загрузка; повторные вызовы ждут один и тот же промис. */
   load() {
-    if (this.loading)
+    if (this.loading !== null)
       return this.loading;
     this.loading = this.doLoad().catch((e) => {
       if (this.status === "loading")
@@ -387,7 +387,7 @@ const RhymeDict = class {
   }
   /** Загрузка второй волны; повторные вызовы ждут один и тот же промис. */
   loadHeavy() {
-    if (this.loadingHeavy)
+    if (this.loadingHeavy !== null)
       return this.loadingHeavy;
     this.loadingHeavy = this.doLoadHeavy().catch((e) => {
       this.heavyStatus = "error";

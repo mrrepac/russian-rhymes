@@ -1,7 +1,9 @@
 import { ItemView, Menu, Notice, Platform, setIcon } from "obsidian";
-import type { WorkspaceLeaf } from "obsidian";
+import type { Editor, WorkspaceLeaf } from "obsidian";
 import { VOWELS, countSyllables, looksSameRoot, markStress } from "./phonetics";
 import type { Definitions, Forms, GenCat, LocalSynDict, Phrases, RhymeEntry, StressVariant, StringList, Synonyms } from "./dict";
+import type { RhymeDict } from "./dict";
+import type { RhymesSettings } from "./main";
 import { t } from "./i18n";
 
 type TabId = "rhymes" | "meaning" | "assoc" | "gen";
@@ -12,9 +14,11 @@ type SoundKind = "all" | "exact" | "near" | "conson" | "asson" | "allit";
  * по ней тестовый стенд вынимает класс из бандла. Заодно видно, что панели от плагина нужно.
  */
 interface HostPlugin {
-  settings: Record<string, any>;
-  dict: any;
-  getEditor(): any;
+  settings: RhymesSettings;
+  // тип берётся из значения: RhymeDict объявлен выражением, имени типа у него нет.
+  // Импорт только типовой — esbuild его стирает, кольца в сборке не возникает
+  dict: InstanceType<typeof RhymeDict>;
+  getEditor(): Editor | null;
   saveSettings(): Promise<void>;
   setFollow(on: boolean): Promise<void>;
   refreshPanel(): void;
@@ -212,7 +216,9 @@ const RhymesView = class extends ItemView {
       const ae = activeDocument.activeElement;
       if (!ae || !this.containerEl.contains(ae))
         return;
-      if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || (ae instanceof HTMLElement && ae.isContentEditable))
+      // instanceOf вместо instanceof: панель могут вынести в отдельное окно, а там
+      // свои конструкторы DOM, и обычная проверка на класс промахнётся
+      if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || (ae.instanceOf(HTMLElement) && ae.isContentEditable))
         return;
       e.preventDefault();
       this.rollGen();
@@ -556,7 +562,9 @@ const RhymesView = class extends ItemView {
     const s = this.plugin.settings;
     this.sylFilter = Number.isInteger(s.filterSyl) && s.filterSyl >= 0 && s.filterSyl <= 4 ? s.filterSyl : 0;
     this.posFilter = POS_KEYS.includes(s.filterPos) ? s.filterPos : "";
-    this.soundKindPref = KIND_KEYS.includes(s.filterKind) ? s.filterKind : "all";
+    // data.json правят руками, поэтому вид созвучия сверяем со списком, а не верим на слово
+    const isKind = (v: string): v is SoundKind => KIND_KEYS.includes(v);
+    this.soundKindPref = isKind(s.filterKind) ? s.filterKind : "all";
     this.soundKind = this.soundKindPref;
     this.semanticOnly = s.filterSemantic === true;
   }
@@ -596,20 +604,22 @@ const RhymesView = class extends ItemView {
     box.createDiv({ cls: "rr-status", text: t("dictMissing") });
     const btn = box.createEl("button", { cls: "rr-add-btn", text: t("dlDict") });
     const prog = box.createDiv({ cls: "rr-dl-progress" });
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      prog.setText(t("dlProgress"));
-      const ok = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
-      if (ok) {
-        if (this.word)
-          await this.showWord(this.word);
-        else
-          this.renderBody();
-      } else {
-        btn.disabled = false;
-        prog.setText(t("dlFailed"));
-      }
-    });
+    btn.addEventListener("click", () => void this.downloadFromPanel(btn, prog));
+  }
+  /** Скачивание словаря по кнопке с экрана «нет словаря». */
+  async downloadFromPanel(btn: HTMLButtonElement, prog: HTMLElement) {
+    btn.disabled = true;
+    prog.setText(t("dlProgress"));
+    const ok = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
+    if (ok) {
+      if (this.word)
+        await this.showWord(this.word);
+      else
+        this.renderBody();
+    } else {
+      btn.disabled = false;
+      prog.setText(t("dlFailed"));
+    }
   }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
   copyWord(w: string) {

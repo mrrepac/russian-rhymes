@@ -5,7 +5,8 @@
     "moduleResolution": "bundler",
     "lib": ["DOM", "ES2018"],
     "allowJs": true,
-    "checkJs": false,
+    // phonetics.js размечен JSDoc'ом — проверяем и его, иначе разметка со временем соврёт
+    "checkJs": true,
     "strict": false,
     // включено отдельно от strict: именно неявные any кормят правила no-unsafe-* у
     // линтера каталога. strictNullChecks — отдельная большая работа, пока не он

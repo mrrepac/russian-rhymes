@@ -4864,7 +4864,7 @@ var RhymeDict = class {
   }
   /** Ленивая загрузка; повторные вызовы ждут один и тот же промис. */
   load() {
-    if (this.loading)
+    if (this.loading !== null)
       return this.loading;
     this.loading = this.doLoad().catch((e) => {
       if (this.status === "loading")
@@ -4984,7 +4984,7 @@ var RhymeDict = class {
   }
   /** Загрузка второй волны; повторные вызовы ждут один и тот же промис. */
   loadHeavy() {
-    if (this.loadingHeavy)
+    if (this.loadingHeavy !== null)
       return this.loadingHeavy;
     this.loadingHeavy = this.doLoadHeavy().catch((e) => {
       this.heavyStatus = "error";
@@ -6295,7 +6295,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       const ae = activeDocument.activeElement;
       if (!ae || !this.containerEl.contains(ae))
         return;
-      if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae instanceof HTMLElement && ae.isContentEditable)
+      if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.instanceOf(HTMLElement) && ae.isContentEditable)
         return;
       e.preventDefault();
       this.rollGen();
@@ -6635,7 +6635,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const s = this.plugin.settings;
     this.sylFilter = Number.isInteger(s.filterSyl) && s.filterSyl >= 0 && s.filterSyl <= 4 ? s.filterSyl : 0;
     this.posFilter = POS_KEYS.includes(s.filterPos) ? s.filterPos : "";
-    this.soundKindPref = KIND_KEYS.includes(s.filterKind) ? s.filterKind : "all";
+    const isKind = (v) => KIND_KEYS.includes(v);
+    this.soundKindPref = isKind(s.filterKind) ? s.filterKind : "all";
     this.soundKind = this.soundKindPref;
     this.semanticOnly = s.filterSemantic === true;
   }
@@ -6675,20 +6676,22 @@ var RhymesView = class extends import_obsidian3.ItemView {
     box.createDiv({ cls: "rr-status", text: t("dictMissing") });
     const btn = box.createEl("button", { cls: "rr-add-btn", text: t("dlDict") });
     const prog = box.createDiv({ cls: "rr-dl-progress" });
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      prog.setText(t("dlProgress"));
-      const ok = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
-      if (ok) {
-        if (this.word)
-          await this.showWord(this.word);
-        else
-          this.renderBody();
-      } else {
-        btn.disabled = false;
-        prog.setText(t("dlFailed"));
-      }
-    });
+    btn.addEventListener("click", () => void this.downloadFromPanel(btn, prog));
+  }
+  /** Скачивание словаря по кнопке с экрана «нет словаря». */
+  async downloadFromPanel(btn, prog) {
+    btn.disabled = true;
+    prog.setText(t("dlProgress"));
+    const ok = await this.plugin.downloadDict((done, total) => prog.setText(`${t("dlProgress")} ${done}/${total}`));
+    if (ok) {
+      if (this.word)
+        await this.showWord(this.word);
+      else
+        this.renderBody();
+    } else {
+      btn.disabled = false;
+      prog.setText(t("dlFailed"));
+    }
   }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
   copyWord(w) {
@@ -8403,14 +8406,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       });
       const del = row.createSpan({ cls: "rr-dictdel", attr: { "aria-label": t("btnClear") } });
       (0, import_obsidian4.setIcon)(del, "trash");
-      del.addEventListener("click", async () => {
-        await this.plugin.dict.deleteDict(d.id);
-        this.plugin.localDicts = this.plugin.localDicts.filter((x) => x.id !== d.id);
-        this.plugin.syncLocalManifest();
-        await this.plugin.saveSettings();
-        this.plugin.refreshPanel();
-        this.update();
-      });
+      del.addEventListener("click", () => void this.removeDict(d.id));
       row.addEventListener("dragstart", (e) => {
         let _a;
         dragId = d.id;
@@ -8440,6 +8436,15 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         dragId = null;
       });
     }
+  }
+  /** Удалить личный словарь: файл с диска, строку из списка и из манифеста. */
+  async removeDict(id) {
+    await this.plugin.dict.deleteDict(id);
+    this.plugin.localDicts = this.plugin.localDicts.filter((x) => x.id !== id);
+    this.plugin.syncLocalManifest();
+    await this.plugin.saveSettings();
+    this.plugin.refreshPanel();
+    this.update();
   }
   /** Переставить словарь fromId на место targetId и сохранить порядок. */
   async moveDict(fromId, targetId) {
