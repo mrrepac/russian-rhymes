@@ -8077,8 +8077,9 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     if (exact)
       return exact.path;
     const lower = dir.toLowerCase();
+    const isFolder = (f) => Array.isArray(f.children);
     for (const f of this.app.vault.getAllLoadedFiles()) {
-      if (f.children && f.path.toLowerCase() === lower)
+      if (isFolder(f) && f.path.toLowerCase() === lower)
         return f.path;
     }
     return dir;

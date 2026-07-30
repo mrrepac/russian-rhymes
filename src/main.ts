@@ -1,5 +1,30 @@
 import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
-import type { App, PluginManifest, SettingDefinitionItem } from "obsidian";
+import type { App, Debouncer, PluginManifest, SettingDefinitionItem, TAbstractFile, TFolder } from "obsidian";
+import type { LocalDict } from "./dict";
+
+/** Настройки плагина, как они лежат в data.json. */
+interface RhymesSettings {
+  doubleCopyMs: number; // 0 = выключено
+  /** Видимые лексические слои: [базовая, частотная, обычная, редкая]. */
+  lexShow: boolean[];
+  /** База URL для скачивания словаря из релиза. */
+  dictUrl: string;
+  /** Пасхалка: открыт ли генератор слов (разблокируется словом «фристайл»). */
+  genUnlocked: boolean;
+  /** Панель сама показывает рифмы к последнему слову строки, где стоит курсор. */
+  followCursor: boolean;
+  filterSyl: number;
+  filterPos: string;
+  filterKind: string;
+  filterSemantic: boolean;
+  localDictDir: string;
+  hideDictDir: boolean;
+  startupLoad: string;
+  mainDictDir: string;
+  // из старых версий: читаются один раз при загрузке и удаляются
+  showRare?: boolean;
+  pageSize?: number;
+}
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
@@ -24,6 +49,20 @@ const DEFAULT_SETTINGS = {
 const FOLLOW_DELAY_MS = 500;
 const MIN_FOLLOW_LEN = 3;
 const RussianRhymesPlugin = class extends Plugin {
+  settings: RhymesSettings;
+  userStress: Record<string, number>;
+  localDicts: LocalDict[];
+  // словарь создаётся в onload, до него его нет
+  dict!: InstanceType<typeof RhymeDict>;
+  lastCopyAt: number;
+  hiddenDirs: string[];
+  dirObserver: MutationObserver | null;
+  dirCleanupRegistered?: boolean;
+  navArmed: boolean;
+  followSync: Debouncer<[], void>;
+  lastFollowKey: string;
+  badWarned: string;
+
   constructor(app: App, manifest: PluginManifest) {
     super(app, manifest);
     this.settings = DEFAULT_SETTINGS;
@@ -417,13 +456,16 @@ const RussianRhymesPlugin = class extends Plugin {
     this.dict.setLocalDir(real);
     await this.saveSettings();
   }
-  realDirPath(dir) {
+  realDirPath(dir: string) {
     const exact = this.app.vault.getAbstractFileByPath(dir);
     if (exact)
       return exact.path;
     const lower = dir.toLowerCase();
+    // папку узнаём по children, а не instanceof TFolder: тестовый стенд подаёт сюда
+    // обычные объекты, и проверка на класс его бы сломала
+    const isFolder = (f: TAbstractFile): f is TFolder => Array.isArray((f as TFolder).children);
     for (const f of this.app.vault.getAllLoadedFiles()) {
-      if (f.children && f.path.toLowerCase() === lower)
+      if (isFolder(f) && f.path.toLowerCase() === lower)
         return f.path;
     }
     return dir;
@@ -477,7 +519,9 @@ const RussianRhymesPlugin = class extends Plugin {
   }
 };
 const RhymesSettingTab = class extends PluginSettingTab {
-  constructor(app, plugin) {
+  plugin: InstanceType<typeof RussianRhymesPlugin>;
+
+  constructor(app: App, plugin: InstanceType<typeof RussianRhymesPlugin>) {
     super(app, plugin);
     this.plugin = plugin;
   }

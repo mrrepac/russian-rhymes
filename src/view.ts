@@ -1,6 +1,28 @@
 import { ItemView, Menu, Notice, Platform, setIcon } from "obsidian";
+import type { WorkspaceLeaf } from "obsidian";
 import { VOWELS, countSyllables, looksSameRoot, markStress } from "./phonetics";
+import type { Definitions, Forms, GenCat, LocalSynDict, Phrases, RhymeEntry, StressVariant, StringList, Synonyms } from "./dict";
 import { t } from "./i18n";
+
+type TabId = "rhymes" | "meaning" | "assoc" | "gen";
+type SoundKind = "all" | "exact" | "near" | "conson" | "asson" | "allit";
+/*
+ * Плагин описан структурно, а не импортом типа из main.ts: там класс объявлен
+ * выражением (const X = class …), а такое имя типа не создаёт — и форму менять нельзя,
+ * по ней тестовый стенд вынимает класс из бандла. Заодно видно, что панели от плагина нужно.
+ */
+interface HostPlugin {
+  settings: Record<string, any>;
+  dict: any;
+  getEditor(): any;
+  saveSettings(): Promise<void>;
+  setFollow(on: boolean): Promise<void>;
+  refreshPanel(): void;
+  getUserStress(word: string): number | undefined;
+  setUserStress(word: string, s: number | null): void;
+  warnBadDicts(): void;
+  downloadDict(onProgress?: (done: number, total: number) => void): Promise<boolean>;
+}
 
 const VIEW_TYPE_RHYMES = "russian-rhymes-view";
 const stripStress = (s) => s.replace(/́/g, "");
@@ -27,8 +49,60 @@ const LONG_PRESS_SLOP = 10;
 const insertHint = () => t(Platform.isMobile ? "insertHintTouch" : "insertHint");
 const displayCmp = (a, b) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
 const RhymesView = class extends ItemView {
+  plugin: HostPlugin;
+  word: string;
+  variants: StressVariant[];
+  stress: number | null; // индекс ударной гласной (словарный или ручной)
+  all: RhymeEntry[];
+  consAll: RhymeEntry[];
+  assonAll: RhymeEntry[];
+  allitAll: RhymeEntry[];
+  tab: TabId;
+  soundKindPref: SoundKind; // что выбрал пользователь — держится при смене слова
+  soundKind: SoundKind; // и он же эффективный: падает в «все» там, где вида нет
+  synonyms: Synonyms | null;
+  localSyns: LocalSynDict[];
+  antonyms: Synonyms | null;
+  hypernyms: Synonyms | null;
+  hyponyms: Synonyms | null;
+  related: Synonyms | null;
+  associations: Synonyms | null;
+  metagrams: Synonyms | null;
+  anagrams: Synonyms | null;
+  definitions: Definitions | null;
+  forms: Forms | null;
+  phrases: Phrases | null;
+  idioms: StringList | null;
+  proverbs: StringList | null;
+  relatedWords: Set<string>;
+  sylFilter: number; // 0 = все, 4 = 4+
+  posFilter: string; // '' = все
+  semanticOnly: boolean;
+  shown: number;
+  sectionOpen: Partial<Record<SoundKind, boolean>>;
+  sectionShown: Partial<Record<SoundKind, number>>;
+  semOpen: Record<string, boolean>;
+  navStack: string[];
+  navPos: number;
+  navigating: boolean; // true во время перехода назад — чтобы не писать в историю
+  genCats: Set<GenCat>;
+  genTiers: Set<number>; // 0 базовая, 1 частотная
+  genCount: number;
+  genWords: string[];
+  genHost: HTMLElement | null;
+  genBag: string[];
+  genBagPos: number;
+  genBagKey: string;
+  resultsHost: HTMLElement | null;
+  copyTimers: Set<number>;
+  // элементы шапки: создаются в onOpen, до него их нет
+  inputEl!: HTMLInputElement;
+  clearBtn!: HTMLElement;
+  followBtn!: HTMLElement;
+  bodyEl!: HTMLElement;
+
   // отложенные таймеры клика (копия) и долгого нажатия (вставка) — гасим при закрытии/перерисовке
-  constructor(leaf, plugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: HostPlugin) {
     super(leaf);
     this.word = "";
     this.variants = [];
@@ -427,7 +501,7 @@ const RhymesView = class extends ItemView {
   /** Проходит ли слово текущие фильтры слоги/часть речи/лексика. */
   /** Множество семантически связанных слов текущего слова — для подсветки «осмысленных» рифм. */
   buildRelatedSet() {
-    const set = /* @__PURE__ */ new Set();
+    const set = /* @__PURE__ */ new Set<string>();
     const w0 = this.word;
     const add = (s) => {
       if (!s)

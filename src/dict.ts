@@ -42,6 +42,71 @@ interface GenPools {
   v: string[][];
   a: string[][];
 }
+export type GenCat = "n" | "v" | "a" | "char";
+/** Ударный вариант слова: где ударение, насколько частотен, какая часть речи. */
+export interface StressVariant {
+  s: number; // индекс ударной гласной
+  f: number; // частотный бакет 0..9
+  p: string; // часть речи: n/v/a/d/x
+}
+/** Слово в выдаче рифм. */
+export interface RhymeEntry {
+  word: string;
+  s: number;
+  f: number;
+  p: string;
+  syl: number;
+  exact: boolean; // совпала опорная согласная — точная (богатая) рифма
+}
+export interface DefExample {
+  text: string;
+  ref?: string; // источник цитаты: автор, произведение
+}
+export interface DefSense {
+  gloss: string; // толкование
+  examples?: DefExample[];
+}
+export interface DefGroup {
+  pos: string; // «сущ.», «гл.»… или "" (у личных словарей — имя словаря)
+  senses: DefSense[];
+  wiki?: boolean; // группа из Викисловаря: панель подписывает её отдельно
+}
+export interface Definitions {
+  lemma: string; // слово, чьи значения показаны (после редиректа форма→лемма)
+  etymology?: string; // происхождение слова (только Викисловарь)
+  groups: DefGroup[];
+}
+export interface FormRow {
+  label: string; // грамматическая метка: «Р. ед.», «прош. м.», «наст. 1л. ед.»
+  form: string; // форма с ударением
+}
+export interface Forms {
+  lemma: string | null; // не null, если формы взяты у леммы формы
+  rows: FormRow[];
+}
+export interface StringList {
+  lemma: string | null;
+  items: string[];
+}
+export interface Synonyms {
+  lemma: string | null; // не null, если ряды взяты у леммы, а не у самой формы
+  groups: string[][];
+}
+export interface PhraseItem {
+  phrase: string;
+  gloss: string;
+}
+export interface Phrases {
+  lemma: string | null;
+  items: PhraseItem[];
+}
+/** Ряды из личного словаря синонимов — своим блоком во вкладке «Ассоциации». */
+export interface LocalSynDict {
+  id: string;
+  name: string;
+  lemma: string | null;
+  groups: string[][];
+}
 
 const DEF_GS = "";
 const DEF_US = "";
