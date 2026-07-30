@@ -6596,10 +6596,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
       this.navStack.push(this.word);
       this.navPos = this.navStack.length - 1;
     }
-    if (this.word === "\u0444\u0440\u0438\u0441\u0442\u0430\u0439\u043B" && !this.plugin.settings.genUnlocked) {
-      this.plugin.settings.genUnlocked = true;
-      void this.plugin.saveSettings();
-    }
+    if (this.word === "\u0444\u0440\u0438\u0441\u0442\u0430\u0439\u043B")
+      this.plugin.genUnlocked = true;
     this.soundKind = this.soundKindPref;
     this.shown = PAGE;
     const dict = this.plugin.dict;
@@ -6782,7 +6780,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 || this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
     if (hasSem)
       list.push("assoc");
-    if (this.plugin.settings.genUnlocked)
+    if (this.plugin.genUnlocked)
       list.push("gen");
     return list;
   }
@@ -7207,7 +7205,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       ["meaning", t("tabMeaning")],
       ["assoc", t("tabAssoc")]
     ];
-    if (this.plugin.settings.genUnlocked)
+    if (this.plugin.genUnlocked)
       defs.push(["gen", t("tabGen")]);
     for (const [id, label] of defs) {
       const enabled = avail.has(id);
@@ -7241,7 +7239,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.bodyEl.empty();
     this.resultsHost = null;
     if (!this.word) {
-      if (!this.plugin.settings.genUnlocked) {
+      if (!this.plugin.genUnlocked) {
         this.bodyEl.createDiv({ cls: "rr-status", text: t("emptyHint") });
         return;
       }
@@ -7999,7 +7997,6 @@ var DEFAULT_SETTINGS = {
   doubleCopyMs: 400,
   lexShow: [true, true, true, false],
   dictUrl: "https://github.com/mrrepac/russian-rhymes/releases/download/dict/",
-  genUnlocked: false,
   followCursor: false,
   filterSyl: 0,
   filterClaus: 0,
@@ -8029,6 +8026,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     this.badWarned = "";
     this.missingWarned = "";
     this.viewClaim = null;
+    this.genUnlocked = false;
   }
   async onload() {
     let _a;
@@ -8202,6 +8200,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     }
     delete this.settings.showRare;
     delete this.settings.pageSize;
+    delete this.settings.genUnlocked;
   }
   /**
    * Отдать словарю список личных словарей целиком. Именно целиком: раньше тут

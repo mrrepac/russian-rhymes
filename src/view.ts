@@ -15,6 +15,9 @@ type SoundKind = "all" | "exact" | "near" | "conson" | "asson" | "allit";
  */
 interface HostPlugin {
   settings: RhymesSettings;
+  // пасхалка «фристайл»: раздел генератора открыт в этом запуске. Не настройка —
+  // в data.json ей делать нечего, слово вводят заново после каждого запуска
+  genUnlocked: boolean;
   // тип берётся из значения: RhymeDict объявлен выражением, имени типа у него нет.
   // Импорт только типовой — esbuild его стирает, кольца в сборке не возникает
   dict: InstanceType<typeof RhymeDict>;
@@ -365,10 +368,9 @@ const RhymesView = class extends ItemView {
       this.navStack.push(this.word);
       this.navPos = this.navStack.length - 1;
     }
-    if (this.word === "\u0444\u0440\u0438\u0441\u0442\u0430\u0439\u043B" && !this.plugin.settings.genUnlocked) {
-      this.plugin.settings.genUnlocked = true;
-      void this.plugin.saveSettings();
-    }
+    // \u043F\u0430\u0441\u0445\u0430\u043B\u043A\u0430 \u0436\u0438\u0432\u0451\u0442 \u0434\u043E \u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A\u0430: \u0432 data.json \u043D\u0435 \u043F\u0438\u0448\u0435\u043C, \u0441\u043B\u043E\u0432\u043E \u0432\u0432\u043E\u0434\u044F\u0442 \u0437\u0430\u043D\u043E\u0432\u043E
+    if (this.word === "\u0444\u0440\u0438\u0441\u0442\u0430\u0439\u043B")
+      this.plugin.genUnlocked = true;
     this.soundKind = this.soundKindPref;
     this.shown = PAGE;
     const dict = this.plugin.dict;
@@ -555,7 +557,7 @@ const RhymesView = class extends ItemView {
     const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 ||this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
     if (hasSem)
       list.push("assoc");
-    if (this.plugin.settings.genUnlocked)
+    if (this.plugin.genUnlocked)
       list.push("gen");
     return list;
   }
@@ -993,7 +995,7 @@ const RhymesView = class extends ItemView {
       ["meaning", t("tabMeaning")],
       ["assoc", t("tabAssoc")]
     ];
-    if (this.plugin.settings.genUnlocked)
+    if (this.plugin.genUnlocked)
       defs.push(["gen", t("tabGen")]);
     for (const [id, label] of defs) {
       const enabled = avail.has(id);
@@ -1027,7 +1029,7 @@ const RhymesView = class extends ItemView {
     this.bodyEl.empty();
     this.resultsHost = null;
     if (!this.word) {
-      if (!this.plugin.settings.genUnlocked) {
+      if (!this.plugin.genUnlocked) {
         this.bodyEl.createDiv({ cls: "rr-status", text: t("emptyHint") });
         return;
       }

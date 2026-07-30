@@ -13,8 +13,6 @@ export interface RhymesSettings {
   lexShow: boolean[];
   /** База URL для скачивания словаря из релиза. */
   dictUrl: string;
-  /** Пасхалка: открыт ли генератор слов (разблокируется словом «фристайл»). */
-  genUnlocked: boolean;
   /** Панель сама показывает рифмы к последнему слову строки, где стоит курсор. */
   followCursor: boolean;
   filterSyl: number;
@@ -30,6 +28,7 @@ export interface RhymesSettings {
   // из старых версий: читаются один раз при загрузке и удаляются
   showRare?: boolean;
   pageSize?: number;
+  genUnlocked?: boolean;
 }
 /** Содержимое data.json целиком. Всё необязательно: файл переживает версии и правки руками. */
 interface PersistedData {
@@ -42,7 +41,6 @@ const DEFAULT_SETTINGS = {
   doubleCopyMs: 400,
   lexShow: [true, true, true, false],
   dictUrl: "https://github.com/mrrepac/russian-rhymes/releases/download/dict/",
-  genUnlocked: false,
   followCursor: false,
   filterSyl: 0,
   filterClaus: 0,
@@ -73,6 +71,7 @@ const RussianRhymesPlugin = class extends Plugin {
   badWarned: string;
   missingWarned: string;
   viewClaim: Promise<WorkspaceLeaf | null> | null;
+  genUnlocked: boolean;
 
   constructor(app: App, manifest: PluginManifest) {
     super(app, manifest);
@@ -96,6 +95,9 @@ const RussianRhymesPlugin = class extends Plugin {
     this.missingWarned = "";
     // идёт ли прямо сейчас создание вкладки панели (см. claimViewLeaf)
     this.viewClaim = null;
+    // пасхалка: раздел «Генератор» открывается словом «фристайл» и живёт до перезапуска.
+    // Поэтому не в настройках — в data.json ей делать нечего
+    this.genUnlocked = false;
   }
   async onload() {
     let _a;
@@ -275,6 +277,9 @@ const RussianRhymesPlugin = class extends Plugin {
     }
     delete this.settings.showRare;
     delete this.settings.pageSize;
+    // генератор — пасхалка, а не настройка: раньше «фристайл» открывал раздел навсегда,
+    // теперь только на текущий запуск. Старое значение из data.json просто выбрасываем
+    delete this.settings.genUnlocked;
   }
   /**
    * Отдать словарю список личных словарей целиком. Именно целиком: раньше тут
