@@ -1,7 +1,47 @@
 import { normalizePath, requestUrl } from "obsidian";
+import type { App } from "obsidian";
 import { gzip as gzip_1, ungzip as ungzip_1 } from "pako";
 import { alliterationPrefix, consonantSkeleton, countSyllables, looksSameRoot, prefixVerbPair, rhymeKey, vowelSkeleton } from "./phonetics";
 import { CHARACTERS } from "./characters";
+
+/*
+ * Типы домена. Восстановлены из рукописных исходников 1.0.0 (тег в истории) — их
+ * стёрла компиляция, а не автор, поэтому выдумывать заново не нужно.
+ */
+export type DictStatus = "idle" | "loading" | "ready" | "missing" | "error";
+export type DictKind = "defs" | "syns";
+/** Распакованный шард: весь текст плюс смещения начала строк для двоичного поиска. */
+export interface TextIndex {
+  text: string;
+  offsets: Uint32Array;
+}
+/** Личный словарь пользователя, как он записан в data.json. */
+export interface LocalDict {
+  id: string;
+  name: string;
+  words: number;
+  enabled: boolean; // тумблер в настройках: показывать ли словарь в выдаче (без удаления файла)
+  kind: DictKind;
+}
+/** Он же, но загруженный в память. */
+interface LocalIndex {
+  name: string;
+  idx: TextIndex;
+  enabled: boolean;
+  kind: DictKind;
+}
+/** Индекс блочного шарда: первый ключ, смещение и сжатая длина каждого блока. */
+interface BlockIndex {
+  keys: string[];
+  offsets: number[];
+  lengths: number[];
+}
+/** Пулы генератора-пасхалки: по части речи — массив слоёв (0 базовый, 1 частотный). */
+interface GenPools {
+  n: string[][];
+  v: string[][];
+  a: string[][];
+}
 
 const DEF_GS = "";
 const DEF_US = "";
@@ -45,6 +85,43 @@ function findLine(idx, prefix) {
   return null;
 }
 const RhymeDict = class {
+  app: App;
+  pluginDir: string;
+  localDir: string;
+  mainDir: string;
+  activeDictDir: string;
+  status: DictStatus;
+  heavyStatus: DictStatus;
+  loading: Promise<void> | null;
+  loadingHeavy: Promise<void> | null;
+  words: TextIndex | null;
+  rhymes: TextIndex | null;
+  syns: TextIndex | null;
+  ants: TextIndex | null;
+  assoc: TextIndex | null;
+  hyper: TextIndex | null;
+  hypo: TextIndex | null;
+  related: TextIndex | null;
+  idioms: TextIndex | null;
+  proverbs: TextIndex | null;
+  metagrams: TextIndex | null;
+  anagrams: TextIndex | null;
+  formsIdx: TextIndex | null;
+  defs: TextIndex | null;
+  lemmas: TextIndex | null;
+  phrasesIdx: TextIndex | null;
+  gen: GenPools | null;
+  chars: string[];
+  yoMap: Map<string, string>;
+  local: Map<string, LocalIndex>;
+  localBad: Set<string>;
+  manifest: LocalDict[];
+  localOrder: string[];
+  blocks: Map<string, BlockIndex>;
+  blockCache: Map<string, string>;
+  rhymeSkel: string[] | null;
+  rhymeKeyEnd: Uint32Array | null;
+
   constructor(app, pluginDir) {
     this.app = app;
     this.pluginDir = pluginDir;

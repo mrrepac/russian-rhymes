@@ -6295,7 +6295,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       const ae = activeDocument.activeElement;
       if (!ae || !this.containerEl.contains(ae))
         return;
-      if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)
+      if (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae instanceof HTMLElement && ae.isContentEditable)
         return;
       e.preventDefault();
       this.rollGen();
