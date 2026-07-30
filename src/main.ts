@@ -18,6 +18,8 @@ export interface RhymesSettings {
   /** Панель сама показывает рифмы к последнему слову строки, где стоит курсор. */
   followCursor: boolean;
   filterSyl: number;
+  /** Клаузула: 0 все, 1 мужская, 2 женская, 3 дактилическая, 4 гипердактилическая. */
+  filterClaus: number;
   filterPos: string;
   filterKind: string;
   filterSemantic: boolean;
@@ -43,6 +45,7 @@ const DEFAULT_SETTINGS = {
   genUnlocked: false,
   followCursor: false,
   filterSyl: 0,
+  filterClaus: 0,
   filterPos: "",
   filterKind: "all",
   filterSemantic: false,

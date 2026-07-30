@@ -6102,6 +6102,13 @@ var en = {
   consonHint: "Slant rhymes: same vowels, consonants of a similar sound class (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
   assonHint: "Assonance: same stressed vowel and vowel pattern, consonants free",
   syllables: "syllables",
+  clausLabel: "clausula",
+  clausM: "masculine",
+  clausF: "feminine",
+  clausD: "dactylic",
+  clausH: "hyperdactylic",
+  clausRhyme: "rhyme",
+  clausHint: "how many syllables follow the stressed one",
   filterPos: "part of speech",
   filterLex: "vocabulary",
   semanticOnly: "meaning",
@@ -6269,6 +6276,13 @@ var ru = {
   consonHint: "\u0421\u043E\u0437\u0432\u0443\u0447\u0438\u044F: \u0442\u0435 \u0436\u0435 \u0433\u043B\u0430\u0441\u043D\u044B\u0435, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u043F\u043E\u0445\u043E\u0436\u0435\u0433\u043E \u043A\u043B\u0430\u0441\u0441\u0430 \u0437\u0432\u0443\u0447\u0430\u043D\u0438\u044F (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
   assonHint: "\u0410\u0441\u0441\u043E\u043D\u0430\u043D\u0441: \u0442\u0430 \u0436\u0435 \u0443\u0434\u0430\u0440\u043D\u0430\u044F \u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438 \u0440\u0438\u0441\u0443\u043D\u043E\u043A \u0433\u043B\u0430\u0441\u043D\u044B\u0445, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u0441\u0432\u043E\u0431\u043E\u0434\u043D\u044B",
   syllables: "\u0441\u043B\u043E\u0433\u0438",
+  clausLabel: "\u043A\u043B\u0430\u0443\u0437\u0443\u043B\u0430",
+  clausM: "\u043C\u0443\u0436\u0441\u043A\u0430\u044F",
+  clausF: "\u0436\u0435\u043D\u0441\u043A\u0430\u044F",
+  clausD: "\u0434\u0430\u043A\u0442\u0438\u043B\u0438\u0447\u0435\u0441\u043A\u0430\u044F",
+  clausH: "\u0433\u0438\u043F\u0435\u0440\u0434\u0430\u043A\u0442\u0438\u043B\u0438\u0447\u0435\u0441\u043A\u0430\u044F",
+  clausRhyme: "\u0440\u0438\u0444\u043C\u0430",
+  clausHint: "\u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0441\u043B\u043E\u0433\u043E\u0432 \u043F\u043E\u0441\u043B\u0435 \u0443\u0434\u0430\u0440\u043D\u043E\u0433\u043E",
   filterPos: "\u0447\u0430\u0441\u0442\u044C \u0440\u0435\u0447\u0438",
   filterLex: "\u043B\u0435\u043A\u0441\u0438\u043A\u0430",
   semanticOnly: "\u043F\u043E \u0441\u043C\u044B\u0441\u043B\u0443",
@@ -6354,6 +6368,14 @@ var POS_LABEL = () => ({
   x: ""
 });
 var lexCat = (f) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
+var clausulaOf = (word, s) => countSyllables(word.slice(s));
+var clausula = (e) => clausulaOf(e.word, e.s);
+var CLAUS_LABEL = () => ({
+  1: t("clausM"),
+  2: t("clausF"),
+  3: t("clausD"),
+  4: t("clausH")
+});
 var PAGE = 50;
 var PAGE_MORE = 200;
 var POS_KEYS = ["", "n", "v", "a", "d", "i"];
@@ -6389,6 +6411,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.idioms = null;
     this.proverbs = null;
     this.sylFilter = 0;
+    this.clausFilter = 0;
+    this.clausOn = 0;
     this.posFilter = "";
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
@@ -6773,6 +6797,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
       return false;
     if (this.sylFilter >= 1 && this.sylFilter <= 3 && e.syl !== this.sylFilter)
       return false;
+    if (this.clausOn) {
+      const c = clausula(e);
+      if (this.clausOn === 4 ? c < 4 : c !== this.clausOn)
+        return false;
+    }
     if (this.posFilter && e.p !== this.posFilter)
       return false;
     return true;
@@ -6781,12 +6810,34 @@ var RhymesView = class extends import_obsidian3.ItemView {
     return this.soundList().filter((e) => this.passesFilter(e)).sort(displayCmp);
   }
   /**
+   * Клаузула самого слова. Ею всё и определяется: рифма ищется от ударной гласной,
+   * поэтому у каждой найденной рифмы окончание будет ровно такой же длины.
+   */
+  wordClausula() {
+    return this.stress === null ? 0 : clausulaOf(this.word, this.stress);
+  }
+  /**
+   * Есть ли в текущем списке окончания разной длины. Ответ «нет» — обычное дело: рифмы,
+   * созвучия и ассонансы подбираются от ударной гласной, поэтому клаузула у них у всех
+   * ровно такая же, как у самого слова. Разнобой даёт только список аллитераций (он
+   * собран по началу слова) и, значит, вид «все».
+   */
+  clausSpread() {
+    const list = this.soundList();
+    if (list.length === 0)
+      return false;
+    const first = clausula(list[0]);
+    return list.some((e) => clausula(e) !== first);
+  }
+  /**
    * Фильтры выдачи липкие: пишешь строку в размер — «2 слога» и часть речи держатся
    * при переходе к следующему слову и при слежении за курсором. Сбрасывает их только
    * кнопка в ряду фильтров и очистка поиска.
    */
   clearFilters() {
     this.sylFilter = 0;
+    this.clausFilter = 0;
+    this.clausOn = 0;
     this.posFilter = "";
     this.semanticOnly = false;
     this.soundKindPref = "all";
@@ -6798,6 +6849,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   loadFilters() {
     const s = this.plugin.settings;
     this.sylFilter = Number.isInteger(s.filterSyl) && s.filterSyl >= 0 && s.filterSyl <= 4 ? s.filterSyl : 0;
+    this.clausFilter = Number.isInteger(s.filterClaus) && s.filterClaus >= 0 && s.filterClaus <= 4 ? s.filterClaus : 0;
     this.posFilter = POS_KEYS.includes(s.filterPos) ? s.filterPos : "";
     const isKind = (v) => KIND_KEYS.includes(v);
     this.soundKindPref = isKind(s.filterKind) ? s.filterKind : "all";
@@ -6808,6 +6860,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   saveFilters() {
     const s = this.plugin.settings;
     s.filterSyl = this.sylFilter;
+    s.filterClaus = this.clausFilter;
     s.filterPos = this.posFilter;
     s.filterKind = this.soundKindPref;
     s.filterSemantic = this.semanticOnly;
@@ -6815,7 +6868,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Есть ли что сбрасывать (слой лексики — глобальная настройка, её не трогаем). */
   filtersActive() {
-    return this.sylFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
+    return this.sylFilter !== 0 || this.clausFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
   }
   /** Пусто: если виноваты фильтры — предложить сброс прямо в сообщении. */
   renderEmpty(host) {
@@ -7062,6 +7115,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const active = this.variants.find((x) => x.s === this.stress);
     if (active && posLabel[active.p])
       wrap.createSpan({ cls: "rr-pos", text: " \xB7 " + posLabel[active.p] });
+    const claus = this.wordClausula();
+    if (claus > 0) {
+      const sp = wrap.createSpan({ cls: "rr-claus", text: " \xB7 " + CLAUS_LABEL()[Math.min(claus, 4)] + " " + t("clausRhyme") });
+      sp.setAttr("title", t("clausHint"));
+    }
     const others = this.variants.filter((x) => x.s !== this.stress);
     if (others.length > 0) {
       const alt = this.bodyEl.createDiv({ cls: "rr-alt" });
@@ -7166,6 +7224,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     } else if (this.soundKind !== "all" && !kinds.some(([k]) => k === this.soundKind)) {
       this.soundKind = "all";
     }
+    const clausVaries = this.clausSpread();
+    this.clausOn = clausVaries ? this.clausFilter : 0;
     const posLabel = POS_LABEL();
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
@@ -7210,6 +7270,34 @@ var RhymesView = class extends import_obsidian3.ItemView {
         }
       }
     );
+    if (clausVaries) {
+      const clausOpts = [
+        [0, t("filterAll")],
+        [1, t("clausM")],
+        [2, t("clausF")],
+        [3, t("clausD")],
+        [4, t("clausH")]
+      ];
+      const clausCur = clausOpts.find(([v]) => v === this.clausFilter);
+      this.filterMenu(
+        bar,
+        t("clausLabel"),
+        clausCur ? clausCur[1] : t("filterAll"),
+        this.clausFilter !== 0,
+        (menu) => {
+          for (const [val, label] of clausOpts) {
+            menu.addItem(
+              (it) => it.setTitle(label).setChecked(this.clausFilter === val).onClick(() => {
+                this.clausFilter = val;
+                this.shown = PAGE;
+                this.saveFilters();
+                this.renderSoundResults();
+              })
+            );
+          }
+        }
+      );
+    }
     const posOpts = [["", t("filterAll")], ["n", t("posN")], ["v", t("posV")], ["a", t("posA")], ["d", t("posD")], ["i", t("posI")]];
     this.filterMenu(
       bar,
@@ -7847,6 +7935,7 @@ var DEFAULT_SETTINGS = {
   genUnlocked: false,
   followCursor: false,
   filterSyl: 0,
+  filterClaus: 0,
   filterPos: "",
   filterKind: "all",
   filterSemantic: false,

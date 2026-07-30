@@ -166,6 +166,13 @@
   color: var(--text-muted);
 }
 
+/* тип окончания слова — подсказка потише части речи: смотрят на неё реже */
+.rr-claus {
+  font-size: var(--font-ui-small);
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
 .rr-alt {
   font-size: var(--font-ui-small);
   color: var(--text-muted);

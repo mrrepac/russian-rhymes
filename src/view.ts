@@ -40,6 +40,19 @@ const POS_LABEL = (): Record<string, string> => ({
   x: ""
 });
 const lexCat = (f: number) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
+/**
+ * Клаузула: сколько слогов в окончании, считая от ударного. s — индекс ударной гласной
+ * в слове, поэтому это просто число гласных в хвосте. 1 — мужская (дом, окно), 2 —
+ * женская (до́ма, сту́жа), 3 — дактилическая (де́вочка), больше — гипердактилическая.
+ */
+const clausulaOf = (word: string, s: number) => countSyllables(word.slice(s));
+const clausula = (e: RhymeEntry) => clausulaOf(e.word, e.s);
+const CLAUS_LABEL = (): Record<number, string> => ({
+  1: t("clausM"),
+  2: t("clausF"),
+  3: t("clausD"),
+  4: t("clausH")
+});
 const PAGE = 50;
 const PAGE_MORE = 200;
 // допустимые значения запоминаемых фильтров — data.json правят и руками
@@ -81,6 +94,8 @@ const RhymesView = class extends ItemView {
   proverbs: StringList | null;
   relatedWords: Set<string>;
   sylFilter: number; // 0 = все, 4 = 4+
+  clausFilter: number; // 0 = все, 1 мужская, 2 женская, 3 дактилическая, 4 гипердактилическая
+  clausOn: number; // он же, но действующий: 0 там, где клаузула у всех одна (см. renderSoundResults)
   posFilter: string; // '' = все
   semanticOnly: boolean;
   shown: number;
@@ -136,6 +151,10 @@ const RhymesView = class extends ItemView {
     this.proverbs = null;
     this.sylFilter = 0;
     // 0 = все, 4 = 4+
+    // сколько слогов занимает окончание, считая от ударного: 1 мужская, 2 женская,
+    // 3 дактилическая, 4 гипердактилическая. Строка ложится в размер или нет именно по нему
+    this.clausFilter = 0;
+    this.clausOn = 0;
     this.posFilter = "";
     // '' = все
     // рифмы, близкие по смыслу: множество семантически связанных слов текущего слова
@@ -538,6 +557,11 @@ const RhymesView = class extends ItemView {
       return false;
     if (this.sylFilter >= 1 && this.sylFilter <= 3 && e.syl !== this.sylFilter)
       return false;
+    if (this.clausOn) {
+      const c = clausula(e);
+      if (this.clausOn === 4 ? c < 4 : c !== this.clausOn)
+        return false;
+    }
     if (this.posFilter && e.p !== this.posFilter)
       return false;
     return true;
@@ -546,12 +570,34 @@ const RhymesView = class extends ItemView {
     return this.soundList().filter((e) => this.passesFilter(e)).sort(displayCmp);
   }
   /**
+   * Клаузула самого слова. Ею всё и определяется: рифма ищется от ударной гласной,
+   * поэтому у каждой найденной рифмы окончание будет ровно такой же длины.
+   */
+  wordClausula() {
+    return this.stress === null ? 0 : clausulaOf(this.word, this.stress);
+  }
+  /**
+   * Есть ли в текущем списке окончания разной длины. Ответ «нет» — обычное дело: рифмы,
+   * созвучия и ассонансы подбираются от ударной гласной, поэтому клаузула у них у всех
+   * ровно такая же, как у самого слова. Разнобой даёт только список аллитераций (он
+   * собран по началу слова) и, значит, вид «все».
+   */
+  clausSpread() {
+    const list = this.soundList();
+    if (list.length === 0)
+      return false;
+    const first = clausula(list[0]);
+    return list.some((e) => clausula(e) !== first);
+  }
+  /**
    * Фильтры выдачи липкие: пишешь строку в размер — «2 слога» и часть речи держатся
    * при переходе к следующему слову и при слежении за курсором. Сбрасывает их только
    * кнопка в ряду фильтров и очистка поиска.
    */
   clearFilters() {
     this.sylFilter = 0;
+    this.clausFilter = 0;
+    this.clausOn = 0;
     this.posFilter = "";
     this.semanticOnly = false;
     this.soundKindPref = "all";
@@ -563,6 +609,7 @@ const RhymesView = class extends ItemView {
   loadFilters() {
     const s = this.plugin.settings;
     this.sylFilter = Number.isInteger(s.filterSyl) && s.filterSyl >= 0 && s.filterSyl <= 4 ? s.filterSyl : 0;
+    this.clausFilter = Number.isInteger(s.filterClaus) && s.filterClaus >= 0 && s.filterClaus <= 4 ? s.filterClaus : 0;
     this.posFilter = POS_KEYS.includes(s.filterPos) ? s.filterPos : "";
     // data.json правят руками, поэтому вид созвучия сверяем со списком, а не верим на слово
     const isKind = (v: string): v is SoundKind => KIND_KEYS.includes(v);
@@ -574,6 +621,7 @@ const RhymesView = class extends ItemView {
   saveFilters() {
     const s = this.plugin.settings;
     s.filterSyl = this.sylFilter;
+    s.filterClaus = this.clausFilter;
     s.filterPos = this.posFilter;
     s.filterKind = this.soundKindPref;
     s.filterSemantic = this.semanticOnly;
@@ -581,7 +629,7 @@ const RhymesView = class extends ItemView {
   }
   /** Есть ли что сбрасывать (слой лексики — глобальная настройка, её не трогаем). */
   filtersActive() {
-    return this.sylFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
+    return this.sylFilter !== 0 || this.clausFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
   }
   /** Пусто: если виноваты фильтры — предложить сброс прямо в сообщении. */
   renderEmpty(host: HTMLElement) {
@@ -835,6 +883,14 @@ const RhymesView = class extends ItemView {
     const active = this.variants.find((x) => x.s === this.stress);
     if (active && posLabel[active.p])
       wrap.createSpan({ cls: "rr-pos", text: " \xB7 " + posLabel[active.p] });
+    // клаузула самого слова: рифмы к нему все будут такими же, значит это и есть ответ
+    // на вопрос «во что ложится строка». Пишем «женская рифма», а не одно прилагательное:
+    // рядом стоит часть речи, и «женская» читалось бы как род
+    const claus = this.wordClausula();
+    if (claus > 0) {
+      const sp = wrap.createSpan({ cls: "rr-claus", text: " \xB7 " + CLAUS_LABEL()[Math.min(claus, 4)] + " " + t("clausRhyme") });
+      sp.setAttr("title", t("clausHint"));
+    }
     const others = this.variants.filter((x) => x.s !== this.stress);
     if (others.length > 0) {
       const alt = this.bodyEl.createDiv({ cls: "rr-alt" });
@@ -939,6 +995,12 @@ const RhymesView = class extends ItemView {
     } else if (this.soundKind !== "all" && !kinds.some(([k]) => k === this.soundKind)) {
       this.soundKind = "all";
     }
+    // клаузула — свойство запроса, а не кандидата: рифма ищется от ударной гласной, значит
+    // у всех рифм к одному слову окончание одной длины. Различается она только там, где
+    // список собран не по хвосту — в аллитерациях и, стало быть, в виде «все». Поэтому
+    // фильтр включается сам, а не молча режет выдачу там, где режет либо всё, либо ничего
+    const clausVaries = this.clausSpread();
+    this.clausOn = clausVaries ? this.clausFilter : 0;
     const posLabel = POS_LABEL();
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
@@ -983,6 +1045,35 @@ const RhymesView = class extends ItemView {
         }
       }
     );
+    // капсулу показываем только там, где есть из чего выбирать — как и капсулу вида
+    if (clausVaries) {
+      const clausOpts: [number, string][] = [
+        [0, t("filterAll")],
+        [1, t("clausM")],
+        [2, t("clausF")],
+        [3, t("clausD")],
+        [4, t("clausH")]
+      ];
+      const clausCur = clausOpts.find(([v]) => v === this.clausFilter);
+      this.filterMenu(
+        bar,
+        t("clausLabel"),
+        clausCur ? clausCur[1] : t("filterAll"),
+        this.clausFilter !== 0,
+        (menu) => {
+          for (const [val, label] of clausOpts) {
+            menu.addItem(
+              (it) => it.setTitle(label).setChecked(this.clausFilter === val).onClick(() => {
+                this.clausFilter = val;
+                this.shown = PAGE;
+                this.saveFilters();
+                this.renderSoundResults();
+              })
+            );
+          }
+        }
+      );
+    }
     const posOpts: [string, string][] = [["", t("filterAll")], ["n", t("posN")], ["v", t("posV")], ["a", t("posA")], ["d", t("posD")], ["i", t("posI")]];
     this.filterMenu(
       bar,
