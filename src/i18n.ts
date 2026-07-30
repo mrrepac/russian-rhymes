@@ -1,6 +1,6 @@
 import { moment } from "obsidian";
 
-var en = {
+const en = {
   panelTitle: "Russian Rhymes",
   searchPlaceholder: "double Ctrl+C on a word",
   dictMissing: "Dictionary files not found. Tap the button below to download them (~72 MB).",
@@ -137,7 +137,7 @@ var en = {
   startupRhymes: "Rhymes (~140 MB)",
   startupFull: "Rhymes and meanings (~500 MB)",
 };
-var ru = {
+const ru = {
   panelTitle: "\u0420\u0438\u0444\u043C\u044B",
   searchPlaceholder: "\u0434\u0432\u0430\u0436\u0434\u044B Ctrl+C \u043D\u0430 \u0441\u043B\u043E\u0432\u0435",
   dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~72 \u041C\u0411).",

@@ -2,9 +2,9 @@ import { ItemView, Menu, Notice, Platform, setIcon } from "obsidian";
 import { VOWELS, countSyllables, looksSameRoot, markStress } from "./phonetics";
 import { t } from "./i18n";
 
-var VIEW_TYPE_RHYMES = "russian-rhymes-view";
-var stripStress = (s) => s.replace(/́/g, "");
-var POS_LABEL = () => ({
+const VIEW_TYPE_RHYMES = "russian-rhymes-view";
+const stripStress = (s) => s.replace(/́/g, "");
+const POS_LABEL = () => ({
   n: t("posN"),
   v: t("posV"),
   a: t("posA"),
@@ -12,21 +12,21 @@ var POS_LABEL = () => ({
   i: t("posI"),
   x: ""
 });
-var lexCat = (f) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
-var PAGE = 50;
-var PAGE_MORE = 200;
+const lexCat = (f) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
+const PAGE = 50;
+const PAGE_MORE = 200;
 // допустимые значения запоминаемых фильтров — data.json правят и руками
-var POS_KEYS = ["", "n", "v", "a", "d", "i"];
-var KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
+const POS_KEYS = ["", "n", "v", "a", "d", "i"];
+const KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
 // что грузить при старте: ничего / первую волну / обе. Толкования и формы — 360 МБ
 // из ~500 МБ всего словаря, поэтому выбор заметно меняет цену запуска
-var STARTUP_KEYS = ["none", "rhymes", "full"];
+const STARTUP_KEYS = ["none", "rhymes", "full"];
 // вставка слова в заметку: Alt+клик на десктопе, долгое нажатие на телефоне
-var LONG_PRESS_MS = 500;
-var LONG_PRESS_SLOP = 10;
-var insertHint = () => t(Platform.isMobile ? "insertHintTouch" : "insertHint");
-var displayCmp = (a, b) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
-var RhymesView = class extends ItemView {
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 10;
+const insertHint = () => t(Platform.isMobile ? "insertHintTouch" : "insertHint");
+const displayCmp = (a, b) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
+const RhymesView = class extends ItemView {
   // отложенные таймеры клика (копия) и долгого нажатия (вставка) — гасим при закрытии/перерисовке
   constructor(leaf, plugin) {
     super(leaf);
@@ -154,7 +154,7 @@ var RhymesView = class extends ItemView {
   }
   /** Показать/скрыть × очистки по наличию текста в поле. */
   updateClear() {
-    var _a;
+    let _a;
     (_a = this.clearBtn) == null ? void 0 : _a.toggleClass("is-shown", this.inputEl.value.length > 0);
   }
   /** Очистить поиск: пустое слово, сброс истории, фокус в поле. */
@@ -170,7 +170,7 @@ var RhymesView = class extends ItemView {
   }
   /** Фокус в поле поиска (при открытии панели пустой — чтобы сразу печатать). */
   focusSearch() {
-    var _a, _b;
+    let _a, _b;
     (_a = this.inputEl) == null ? void 0 : _a.focus();
     (_b = this.inputEl) == null ? void 0 : _b.select();
   }
@@ -193,7 +193,7 @@ var RhymesView = class extends ItemView {
   }
   /** Точка входа: показать слово (из двойного Ctrl+C, меню, команды, инпута или двойного клика по чипу). */
   async showWord(raw) {
-    var _a, _b;
+    let _a, _b;
     const ms = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
     if (!ms || ms.length === 0)
       return;
@@ -286,7 +286,7 @@ var RhymesView = class extends ItemView {
   }
   /** Текущая вкладка опустела на новом слове/ударении — уйти на первую непустую. */
   ensureValidTab() {
-    var _a;
+    let _a;
     const tabs = this.availableTabs();
     if (!tabs.includes(this.tab))
       this.tab = (_a = tabs[0]) != null ? _a : "rhymes";
@@ -342,7 +342,7 @@ var RhymesView = class extends ItemView {
   }
   /** Подсветить кнопку слежения по текущему состоянию настройки. */
   updateFollowBtn() {
-    var _a;
+    let _a;
     (_a = this.followBtn) == null ? void 0 : _a.toggleClass("is-on", this.plugin.settings.followCursor);
   }
   /** Уйти с генератора: включили слежение — панель должна показывать рифмы, а не пасхалку. */
@@ -413,7 +413,7 @@ var RhymesView = class extends ItemView {
   }
   /** Клик по гласной: сменить ударение (и запомнить, если оно не словарное по умолчанию). */
   setStress(i) {
-    var _a, _b;
+    let _a, _b;
     if (this.stress === i)
       return;
     this.stress = i;
@@ -546,7 +546,7 @@ var RhymesView = class extends ItemView {
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
    * navigator.clipboard (тем более из setTimeout) — без фолбэка копия молча терялась. */
   async writeClipboard(w) {
-    var _a;
+    let _a;
     try {
       if ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) {
         await navigator.clipboard.writeText(w);
@@ -831,7 +831,7 @@ var RhymesView = class extends ItemView {
   }
   /** Пилюли строгости + фильтры + список рифм. Зовётся заново при любом клике по фильтру. */
   renderSoundResults() {
-    var _a, _b, _c, _d, _e, _f;
+    let _a, _b, _c, _d, _e, _f;
     const host = this.resultsHost;
     if (!host)
       return;
@@ -1008,7 +1008,7 @@ var RhymesView = class extends ItemView {
   }
   /** Одна сворачиваемая секция вида: заголовок со счётчиком; чипы рисуются лениво при раскрытии. */
   renderKindSection(host, kind, label, list, defaultOpen, posLabel, lexLabel) {
-    var _a;
+    let _a;
     const details = host.createEl("details", { cls: "rr-ksec" });
     details.open = (_a = this.sectionOpen[kind]) != null ? _a : defaultOpen;
     const sum = details.createEl("summary", { cls: "rr-ksec-sum" });
@@ -1016,7 +1016,7 @@ var RhymesView = class extends ItemView {
     sum.createSpan({ cls: "rr-ksec-count", text: String(list.length) });
     const body = details.createDiv({ cls: "rr-list" });
     const paint = () => {
-      var _a2;
+      let _a2;
       body.empty();
       const shown = (_a2 = this.sectionShown[kind]) != null ? _a2 : PAGE;
       for (const e of list.slice(0, shown))
@@ -1157,7 +1157,7 @@ var RhymesView = class extends ItemView {
   }
   /** Сворачиваемый подраздел «Ассоциаций»: заголовок + счётчик, тело строит build; раскрытость на сессию. */
   semSection(host, key, title, count, build) {
-    var _a;
+    let _a;
     const details = host.createEl("details", { cls: "rr-ssec" });
     details.open = (_a = this.semOpen[key]) != null ? _a : true;
     const sum = details.createEl("summary", { cls: "rr-ssec-sum" });
@@ -1317,7 +1317,7 @@ var RhymesView = class extends ItemView {
     }
     this.genHost = wrap.createDiv({ cls: "rr-gen-display", attr: { tabindex: "0" } });
     this.genHost.addEventListener("click", () => {
-      var _a;
+      let _a;
       (_a = this.genHost) == null ? void 0 : _a.focus();
       this.rollGen();
     });

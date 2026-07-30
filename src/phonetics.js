@@ -1,4 +1,4 @@
-var VOWELS = "\u0430\u0435\u0451\u0438\u043E\u0443\u044B\u044D\u044E\u044F";
+const VOWELS = "\u0430\u0435\u0451\u0438\u043E\u0443\u044B\u044D\u044E\u044F";
 function vowelSkeleton(s) {
   let out = "";
   for (const c of s)
@@ -6,7 +6,7 @@ function vowelSkeleton(s) {
       out += c;
   return out;
 }
-var CONS_CLASS = {
+const CONS_CLASS = {
   \u043F: "T",
   \u0431: "T",
   \u0442: "T",
@@ -45,9 +45,9 @@ function countSyllables(w) {
       n++;
   return n;
 }
-var DEVOICE = { \u0431: "\u043F", \u0432: "\u0444", \u0433: "\u043A", \u0434: "\u0442", \u0436: "\u0448", \u0437: "\u0441" };
-var VOICELESS = "\u043F\u0444\u043A\u0442\u0448\u0441\u0445\u0446\u0447\u0449";
-var OGO_KEEP_G = /* @__PURE__ */ new Set([
+const DEVOICE = { \u0431: "\u043F", \u0432: "\u0444", \u0433: "\u043A", \u0434: "\u0442", \u0436: "\u0448", \u0437: "\u0441" };
+const VOICELESS = "\u043F\u0444\u043A\u0442\u0448\u0441\u0445\u0446\u0447\u0449";
+const OGO_KEEP_G = /* @__PURE__ */ new Set([
   "\u043C\u043D\u043E\u0433\u043E",
   "\u043D\u0435\u043C\u043D\u043E\u0433\u043E",
   "\u043D\u0430\u043C\u043D\u043E\u0433\u043E",
@@ -136,7 +136,7 @@ function looksSameRoot(a, b) {
   const max = Math.max(a.length, b.length);
   return i >= 3 && i >= max - 2 && i * 4 >= max * 3;
 }
-var VERB_PREFIXES = /* @__PURE__ */ new Set([
+const VERB_PREFIXES = /* @__PURE__ */ new Set([
   "в", "вз", "вс", "взо", "воз", "вос", "возо", "вы", "до", "за", "из", "ис", "изо", "на", "над", "надо",
   "не", "недо", "о", "об", "обо", "обез", "обес", "от", "ото", "пере", "по", "под", "подо", "пре", "пред", "при", "про",
   "раз", "рас", "разо", "роз", "рос", "с", "со", "у"

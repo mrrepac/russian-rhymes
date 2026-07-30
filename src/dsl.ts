@@ -1,10 +1,10 @@
 import { Inflate as Inflate_1 } from "pako";
 
-var WORD_RE = /^[а-яё]+(-[а-яё]+)*$/;
-var SYN_RE = /^[а-яё]+([ -][а-яё]+){0,2}$/;
-var MAX_GLOSSES = 10;
-var MAX_GROUPS = 6;
-var MAX_DECOMP = 200 * 1024 * 1024;
+const WORD_RE = /^[а-яё]+(-[а-яё]+)*$/;
+const SYN_RE = /^[а-яё]+([ -][а-яё]+){0,2}$/;
+const MAX_GLOSSES = 10;
+const MAX_GROUPS = 6;
+const MAX_DECOMP = 200 * 1024 * 1024;
 function ungzipCapped(bytes) {
   const inflator = new Inflate_1();
   const passThrough = inflator.onData.bind(inflator);
@@ -26,12 +26,12 @@ function cleanHeadword(s) {
 function cleanBody(s) {
   return s.replace(/\{\{[^}]*\}\}/g, "").replace(/\{([^}]*)\}/g, "$1").replace(/\[\/?[^\]]*\]/g, "").replace(/[[\]]/g, "").replace(/<<|>>/g, "").replace(/\\(.)/g, "$1").replace(/~/g, "").replace(/\s+/g, " ").trim();
 }
-var SYN_COUNT_RE = /кол-?\s?во синонимов/i;
-var SYN_STOP = /* @__PURE__ */ new Set(["сущ", "гл", "прил", "нареч", "нар", "межд", "предл", "союз", "част", "числ", "мест", "см", "syn"]);
-var SYN_MAX_WORDS = 80;
+const SYN_COUNT_RE = /кол-?\s?во синонимов/i;
+const SYN_STOP = /* @__PURE__ */ new Set(["сущ", "гл", "прил", "нареч", "нар", "межд", "предл", "союз", "част", "числ", "мест", "см", "syn"]);
+const SYN_MAX_WORDS = 80;
 // в ASIS полно описательных оборотов («противодействовавший насильственным действиям») —
 // это не синонимы для песни, а длинные чипы, которые распирают панель
-var SYN_MAX_LEN = 28;
+const SYN_MAX_LEN = 28;
 /**
  * Строка синонимического словаря — в список слов. Форматы разные: у ASIS это
  * «• <<автодорога>> 10» (маркер, ссылка, ранг частотности), у Александровой —

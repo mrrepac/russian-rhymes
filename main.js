@@ -5791,7 +5791,7 @@ var RhymeDict = class {
   }
   /** Ёфикация ввода: е-написание -> однозначная ё-версия (береза->берёза); мед/небо/лет не трогает. */
   normalizeYo(word) {
-    var _a;
+    let _a;
     return (_a = this.yoMap.get(word)) != null ? _a : word;
   }
   /**
@@ -5800,7 +5800,7 @@ var RhymeDict = class {
    * префикса ищем бинарно, дальше линейный скан по блоку.
    */
   alliterationsFor(word) {
-    var _a;
+    let _a;
     if (!this.words)
       return [];
     const prefix = alliterationPrefix(word);
@@ -6311,7 +6311,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Показать/скрыть × очистки по наличию текста в поле. */
   updateClear() {
-    var _a;
+    let _a;
     (_a = this.clearBtn) == null ? void 0 : _a.toggleClass("is-shown", this.inputEl.value.length > 0);
   }
   /** Очистить поиск: пустое слово, сброс истории, фокус в поле. */
@@ -6327,7 +6327,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Фокус в поле поиска (при открытии панели пустой — чтобы сразу печатать). */
   focusSearch() {
-    var _a, _b;
+    let _a, _b;
     (_a = this.inputEl) == null ? void 0 : _a.focus();
     (_b = this.inputEl) == null ? void 0 : _b.select();
   }
@@ -6350,7 +6350,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Точка входа: показать слово (из двойного Ctrl+C, меню, команды, инпута или двойного клика по чипу). */
   async showWord(raw) {
-    var _a, _b;
+    let _a, _b;
     const ms = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
     if (!ms || ms.length === 0)
       return;
@@ -6441,7 +6441,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Текущая вкладка опустела на новом слове/ударении — уйти на первую непустую. */
   ensureValidTab() {
-    var _a;
+    let _a;
     const tabs = this.availableTabs();
     if (!tabs.includes(this.tab))
       this.tab = (_a = tabs[0]) != null ? _a : "rhymes";
@@ -6497,7 +6497,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Подсветить кнопку слежения по текущему состоянию настройки. */
   updateFollowBtn() {
-    var _a;
+    let _a;
     (_a = this.followBtn) == null ? void 0 : _a.toggleClass("is-on", this.plugin.settings.followCursor);
   }
   /** Уйти с генератора: включили слежение — панель должна показывать рифмы, а не пасхалку. */
@@ -6566,7 +6566,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Клик по гласной: сменить ударение (и запомнить, если оно не словарное по умолчанию). */
   setStress(i) {
-    var _a, _b;
+    let _a, _b;
     if (this.stress === i)
       return;
     this.stress = i;
@@ -6699,7 +6699,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
    * navigator.clipboard (тем более из setTimeout) — без фолбэка копия молча терялась. */
   async writeClipboard(w) {
-    var _a;
+    let _a;
     try {
       if ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) {
         await navigator.clipboard.writeText(w);
@@ -6983,7 +6983,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Пилюли строгости + фильтры + список рифм. Зовётся заново при любом клике по фильтру. */
   renderSoundResults() {
-    var _a, _b, _c, _d, _e, _f;
+    let _a, _b, _c, _d, _e, _f;
     const host = this.resultsHost;
     if (!host)
       return;
@@ -7160,7 +7160,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Одна сворачиваемая секция вида: заголовок со счётчиком; чипы рисуются лениво при раскрытии. */
   renderKindSection(host, kind, label, list, defaultOpen, posLabel, lexLabel) {
-    var _a;
+    let _a;
     const details = host.createEl("details", { cls: "rr-ksec" });
     details.open = (_a = this.sectionOpen[kind]) != null ? _a : defaultOpen;
     const sum = details.createEl("summary", { cls: "rr-ksec-sum" });
@@ -7168,7 +7168,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     sum.createSpan({ cls: "rr-ksec-count", text: String(list.length) });
     const body = details.createDiv({ cls: "rr-list" });
     const paint = () => {
-      var _a2;
+      let _a2;
       body.empty();
       const shown = (_a2 = this.sectionShown[kind]) != null ? _a2 : PAGE;
       for (const e of list.slice(0, shown))
@@ -7306,7 +7306,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Сворачиваемый подраздел «Ассоциаций»: заголовок + счётчик, тело строит build; раскрытость на сессию. */
   semSection(host, key, title, count, build) {
-    var _a;
+    let _a;
     const details = host.createEl("details", { cls: "rr-ssec" });
     details.open = (_a = this.semOpen[key]) != null ? _a : true;
     const sum = details.createEl("summary", { cls: "rr-ssec-sum" });
@@ -7463,7 +7463,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     this.genHost = wrap.createDiv({ cls: "rr-gen-display", attr: { tabindex: "0" } });
     this.genHost.addEventListener("click", () => {
-      var _a;
+      let _a;
       (_a = this.genHost) == null ? void 0 : _a.focus();
       this.rollGen();
     });
@@ -7704,7 +7704,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     this.badWarned = "";
   }
   async onload() {
-    var _a;
+    let _a;
     await this.loadSettings();
     this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
     this.syncLocalManifest();
@@ -7859,7 +7859,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     return STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
   }
   async loadSettings() {
-    var _a;
+    let _a;
     const data = await this.loadData();
     if (data && data.settings) {
       this.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings);
@@ -7915,7 +7915,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Слово из выделения/под курсором активного редактора, иначе из window-выделения. */
   grabWord() {
-    var _a, _b;
+    let _a, _b;
     const mv = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView);
     let raw = "";
     if (mv)
@@ -7943,7 +7943,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
    * последняя заметка основной области. В режиме чтения вставлять некуда.
    */
   getEditor() {
-    var _a;
+    let _a;
     const mv = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView);
     if (mv)
       return mv.getMode() === "source" ? mv.editor : null;
@@ -7958,7 +7958,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Включить/выключить слежение за курсором (кнопка в панели, команда, настройка). */
   async setFollow(on) {
-    var _a, _b;
+    let _a, _b;
     this.settings.followCursor = on;
     await this.saveSettings();
     (_a = this.getRhymesView()) == null ? void 0 : _a.updateFollowBtn();
@@ -8085,12 +8085,12 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Перерисовать открытую панель (после подключения/очистки личного словаря). */
   refreshPanel() {
-    var _a;
+    let _a;
     (_a = this.getRhymesView()) == null ? void 0 : _a.refresh();
   }
   /** Вкладка панели всегда существует в правом сайдбаре (урок мобильной версии Songwriter). */
   async ensureViewInSidebar(reveal) {
-    var _a;
+    let _a;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
     let leaf = (_a = existing[0]) != null ? _a : null;
     if (!leaf) {
@@ -8328,7 +8328,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         this.display();
       });
       row.addEventListener("dragstart", (e) => {
-        var _a;
+        let _a;
         dragId = d.id;
         row.addClass("is-dragging");
         (_a = e.dataTransfer) == null ? void 0 : _a.setData("text/plain", d.id);
@@ -8347,7 +8347,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       });
       row.addEventListener("dragleave", () => row.removeClass("is-drop"));
       row.addEventListener("drop", (e) => {
-        var _a;
+        let _a;
         e.preventDefault();
         row.removeClass("is-drop");
         const from = dragId || ((_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain")) || "";

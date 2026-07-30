@@ -4,7 +4,7 @@ import { t } from "./i18n";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
 import { convertDsl } from "./dsl";
 
-var DEFAULT_SETTINGS = {
+const DEFAULT_SETTINGS = {
   doubleCopyMs: 400,
   lexShow: [true, true, true, false],
   dictUrl: "https://github.com/mrrepac/russian-rhymes/releases/download/dict/",
@@ -20,9 +20,9 @@ var DEFAULT_SETTINGS = {
   // пусто — словарь остаётся в папке плагина, как раньше; переезд только по желанию
   mainDictDir: ""
 };
-var FOLLOW_DELAY_MS = 500;
-var MIN_FOLLOW_LEN = 3;
-var RussianRhymesPlugin = class extends Plugin {
+const FOLLOW_DELAY_MS = 500;
+const MIN_FOLLOW_LEN = 3;
+const RussianRhymesPlugin = class extends Plugin {
   constructor(...args) {
     super(...args);
     this.settings = DEFAULT_SETTINGS;
@@ -43,7 +43,7 @@ var RussianRhymesPlugin = class extends Plugin {
     this.badWarned = "";
   }
   async onload() {
-    var _a;
+    let _a;
     await this.loadSettings();
     this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
     this.syncLocalManifest();
@@ -199,7 +199,7 @@ var RussianRhymesPlugin = class extends Plugin {
     return STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
   }
   async loadSettings() {
-    var _a;
+    let _a;
     const data = await this.loadData();
     if (data && data.settings) {
       this.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings);
@@ -255,7 +255,7 @@ var RussianRhymesPlugin = class extends Plugin {
   }
   /** Слово из выделения/под курсором активного редактора, иначе из window-выделения. */
   grabWord() {
-    var _a, _b;
+    let _a, _b;
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     let raw = "";
     if (mv)
@@ -283,7 +283,7 @@ var RussianRhymesPlugin = class extends Plugin {
    * последняя заметка основной области. В режиме чтения вставлять некуда.
    */
   getEditor() {
-    var _a;
+    let _a;
     const mv = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (mv)
       return mv.getMode() === "source" ? mv.editor : null;
@@ -298,7 +298,7 @@ var RussianRhymesPlugin = class extends Plugin {
   }
   /** Включить/выключить слежение за курсором (кнопка в панели, команда, настройка). */
   async setFollow(on) {
-    var _a, _b;
+    let _a, _b;
     this.settings.followCursor = on;
     await this.saveSettings();
     (_a = this.getRhymesView()) == null ? void 0 : _a.updateFollowBtn();
@@ -429,12 +429,12 @@ var RussianRhymesPlugin = class extends Plugin {
   }
   /** Перерисовать открытую панель (после подключения/очистки личного словаря). */
   refreshPanel() {
-    var _a;
+    let _a;
     (_a = this.getRhymesView()) == null ? void 0 : _a.refresh();
   }
   /** Вкладка панели всегда существует в правом сайдбаре (урок мобильной версии Songwriter). */
   async ensureViewInSidebar(reveal) {
-    var _a;
+    let _a;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
     let leaf = (_a = existing[0]) != null ? _a : null;
     if (!leaf) {
@@ -475,7 +475,7 @@ var RussianRhymesPlugin = class extends Plugin {
     }
   }
 };
-var RhymesSettingTab = class extends PluginSettingTab {
+const RhymesSettingTab = class extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -677,7 +677,7 @@ var RhymesSettingTab = class extends PluginSettingTab {
         this.display();
       });
       row.addEventListener("dragstart", (e) => {
-        var _a;
+        let _a;
         dragId = d.id;
         row.addClass("is-dragging");
         (_a = e.dataTransfer) == null ? void 0 : _a.setData("text/plain", d.id);
@@ -696,7 +696,7 @@ var RhymesSettingTab = class extends PluginSettingTab {
       });
       row.addEventListener("dragleave", () => row.removeClass("is-drop"));
       row.addEventListener("drop", (e) => {
-        var _a;
+        let _a;
         e.preventDefault();
         row.removeClass("is-drop");
         // из соседнего списка тянут мимо dragId (у каждого списка он свой) — берём id из события

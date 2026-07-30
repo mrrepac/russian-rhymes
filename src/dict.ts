@@ -3,15 +3,15 @@ import { gzip as gzip_1, ungzip as ungzip_1 } from "pako";
 import { alliterationPrefix, consonantSkeleton, countSyllables, looksSameRoot, prefixVerbPair, rhymeKey, vowelSkeleton } from "./phonetics";
 import { CHARACTERS } from "./characters";
 
-var DEF_GS = "";
-var DEF_US = "";
-var DEF_RS = "";
-var DEF_FS = "";
+const DEF_GS = "";
+const DEF_US = "";
+const DEF_RS = "";
+const DEF_FS = "";
 // сколько распакованных блоков держим про запас: блок ~64 тыс. знаков, шесть штук —
 // меньше мегабайта, и подряд идущие слова обычно попадают в уже прочитанный
-var BLOCK_CACHE = 6;
+const BLOCK_CACHE = 6;
 // шарды второй волны: формы и толкования, 360 МБ из ~500 МБ всего словаря
-var HEAVY_SHARDS = ["forms", "definitions"];
+const HEAVY_SHARDS = ["forms", "definitions"];
 function buildIndex(text) {
   let count = 1;
   for (let i = 0; i < text.length; i++)
@@ -44,7 +44,7 @@ function findLine(idx, prefix) {
   }
   return null;
 }
-var RhymeDict = class {
+const RhymeDict = class {
   constructor(app, pluginDir) {
     this.app = app;
     this.pluginDir = pluginDir;
@@ -1060,7 +1060,7 @@ var RhymeDict = class {
   }
   /** Ёфикация ввода: е-написание -> однозначная ё-версия (береза->берёза); мед/небо/лет не трогает. */
   normalizeYo(word) {
-    var _a;
+    let _a;
     return (_a = this.yoMap.get(word)) != null ? _a : word;
   }
   /**
@@ -1069,7 +1069,7 @@ var RhymeDict = class {
    * префикса ищем бинарно, дальше линейный скан по блоку.
    */
   alliterationsFor(word) {
-    var _a;
+    let _a;
     if (!this.words)
       return [];
     const prefix = alliterationPrefix(word);
