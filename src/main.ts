@@ -855,15 +855,25 @@ const RhymesSettingTab = class extends PluginSettingTab {
     };
   }
   /**
+   * Куда класть широкий блок строки настроек — список словарей, файлов, ударений.
+   *
+   * НЕ в group.listEl, хотя место выглядит подходящим. Сразу после наших render Obsidian
+   * зовёт listEl.setChildrenInPlace(<строки группы>) и выбрасывает оттуда всё, что строкой
+   * не является. Блок исчезал молча: ни ошибки в консоли, ни следа — заголовок и кнопка
+   * на месте, а списка нет. Сама строка в этот перечень входит, поэтому внутри неё блок
+   * уборку переживает; своя полоса ему выдаётся классом (см. .setting-item.rr-wide).
+   */
+  wideHost(setting: Setting) {
+    setting.settingEl.addClass("rr-wide");
+    return setting.settingEl;
+  }
+  /**
    * Инвентарь словаря: что из двадцати файлов лежит на диске. Единственное место, где
    * видно оборванную закачку — до этого недостающий шард просто оборачивался пустой
    * вкладкой. Читается с диска, поэтому список заполняется после ответа, а не сразу.
    */
   renderInventory(setting: Setting, group: SettingGroup) {
-    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
-    if (!host)
-      return;
-    const listEl = host.createDiv({ cls: "rr-shards" });
+    const listEl = this.wideHost(setting).createDiv({ cls: "rr-shards" });
     listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
     const fill = () => {
       void this.plugin.dict.inventory().then((inv) => {
@@ -886,10 +896,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * Здесь их видно списком, каждое снимается по клику.
    */
   renderStresses(setting: Setting, group: SettingGroup) {
-    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
-    if (!host)
-      return;
-    const listEl = host.createDiv({ cls: "rr-stresses" });
+    const listEl = this.wideHost(setting).createDiv({ cls: "rr-stresses" });
     const fill = () => {
       listEl.empty();
       const words = Object.keys(this.plugin.userStress).sort();
@@ -935,11 +942,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     });
     if (!dicts.length)
       return;
-    // список ложится в контейнер группы, под строку с заголовком и кнопкой ввоза
-    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
-    if (!host)
-      return;
-    const listEl = host.createDiv({ cls: "rr-dictlist" });
+    const listEl = this.wideHost(setting).createDiv({ cls: "rr-dictlist" });
     this.fillDictList(listEl, dicts);
     // строку могут перерисовать в одиночку, а список висит рядом с ней, не внутри:
     // без уборки он остался бы и продублировался
