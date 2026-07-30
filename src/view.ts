@@ -1,7 +1,7 @@
 import { ItemView, Menu, Notice, Platform, setIcon } from "obsidian";
 import type { Editor, WorkspaceLeaf } from "obsidian";
 import { VOWELS, countSyllables, looksSameRoot, markStress } from "./phonetics";
-import type { Definitions, Forms, GenCat, LocalSynDict, Phrases, RhymeEntry, StressVariant, StringList, Synonyms } from "./dict";
+import type { Definitions, Forms, GenCat, LocalSynDict, Phrases, RhymeEntry, ShardInfo, StressVariant, StringList, Synonyms } from "./dict";
 import type { RhymeDict } from "./dict";
 import type { RhymesSettings } from "./main";
 import { t } from "./i18n";
@@ -47,6 +47,66 @@ const lexCat = (f: number) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
  */
 const clausulaOf = (word: string, s: number) => countSyllables(word.slice(s));
 const clausula = (e: RhymeEntry) => clausulaOf(e.word, e.s);
+/**
+ * Название шарда. Перечислено вручную, а не собрано из ключа: t() принимает только
+ * существующие ключи, и склеенный ключ такой проверки не проходит. Таблица строится
+ * на каждый вызов — язык берётся из moment в момент обращения.
+ */
+function shardTitle(name: string) {
+  const titles: Record<string, string> = {
+    words: t("shardWords"),
+    rhymes: t("shardRhymes"),
+    forms: t("shardForms"),
+    definitions: t("shardDefinitions"),
+    synonyms: t("shardSynonyms"),
+    antonyms: t("shardAntonyms"),
+    associations: t("shardAssociations"),
+    hypernyms: t("shardHypernyms"),
+    hyponyms: t("shardHyponyms"),
+    related: t("shardRelated"),
+    idioms: t("shardIdioms"),
+    proverbs: t("shardProverbs"),
+    metagrams: t("shardMetagrams"),
+    anagrams: t("shardAnagrams"),
+    lemmas: t("shardLemmas"),
+    phrases: t("shardPhrases"),
+    yo: t("shardYo"),
+    generator: t("shardGenerator")
+  };
+  return titles[name] || name;
+}
+/** Размер файла человеку: мегабайты с десятой, мелочь — в килобайтах. */
+function fmtSize(bytes: number) {
+  if (bytes >= 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("unitMb")}`;
+  return `${Math.max(1, Math.round(bytes / 1024))} ${t("unitKb")}`;
+}
+/**
+ * Список файлов словаря — один на настройки и на панель. Живёт тут, а не в main.ts,
+ * потому что панель идёт в сборке раньше: обратный импорт замкнул бы кольцо.
+ * withTotal — строка итога; в панели её роль играет заголовок свёрнутого блока.
+ */
+function renderShardList(host: HTMLElement, inv: ShardInfo[], withTotal: boolean) {
+  let have = 0, bytes = 0;
+  for (const s of inv) {
+    const row = host.createDiv({ cls: "rr-shardrow" });
+    row.createSpan({ cls: "rr-shard-name", text: shardTitle(s.name) });
+    if (s.present && !s.broken) {
+      have++;
+      bytes += s.size;
+      row.createSpan({ cls: "rr-shard-size", text: fmtSize(s.size) });
+    } else {
+      row.addClass("rr-shard-bad");
+      // «повреждён» и «нет файла» — разные беды: первый чинится перекачиванием этого
+      // файла, второй мог и не скачаться вовсе
+      row.createSpan({ cls: "rr-shard-size", text: s.broken ? t("invBroken") : t("invMissing") });
+    }
+  }
+  if (withTotal)
+    host.createDiv({ cls: "rr-shard-note", text: `${t("invTotal")} ${have}/${inv.length} \xB7 ${fmtSize(bytes)}` });
+  if (have < inv.length)
+    host.createDiv({ cls: "rr-shard-note rr-shard-bad", text: t("invHint") });
+}
 const CLAUS_LABEL = (): Record<number, string> => ({
   1: t("clausM"),
   2: t("clausF"),
@@ -655,6 +715,26 @@ const RhymesView = class extends ItemView {
     const btn = box.createEl("button", { cls: "rr-add-btn", text: t("dlDict") });
     const prog = box.createDiv({ cls: "rr-dl-progress" });
     btn.addEventListener("click", () => void this.downloadFromPanel(btn, prog));
+    // «нет словаря» — не всегда «нет ничего»: чаще оборвалась закачка. Список показывает,
+    // что уже лежит на диске, и докачивать придётся не всё
+    this.renderShardBox(box);
+  }
+  /**
+   * Свёрнутый список файлов словаря. Тот же, что в настройках, но замечают недостачу
+   * именно тут: вкладка пуста, и вопрос «а всё ли скачалось» возникает в панели, а не
+   * в настройках. Читается с диска, поэтому заголовок и строки появляются после ответа.
+   */
+  renderShardBox(host: HTMLElement) {
+    const box = host.createEl("details", { cls: "rr-shards-box" });
+    const sum = box.createEl("summary", { cls: "rr-shards-sum", text: t("invFiles") });
+    const listEl = box.createDiv({ cls: "rr-shards" });
+    listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
+    void this.plugin.dict.inventory().then((inv) => {
+      const have = inv.filter((s) => s.present && !s.broken).length;
+      sum.setText(`${t("invFiles")}: ${have}/${inv.length}`);
+      listEl.empty();
+      renderShardList(listEl, inv, false);
+    });
   }
   /** Скачивание словаря по кнопке с экрана «нет словаря». */
   async downloadFromPanel(btn: HTMLButtonElement, prog: HTMLElement) {
@@ -960,6 +1040,11 @@ const RhymesView = class extends ItemView {
     }
     this.renderWordHeader();
     this.renderTabs(new Set(this.availableTabs()));
+    // чего-то из словаря нет на диске — говорим об этом прямо под разделами, свёрнутой
+    // строкой: приглушённая вкладка сама по себе причину не объясняет. Всё на месте —
+    // строки нет вовсе, чтобы не мозолить глаза
+    if (this.plugin.dict.missingShards.length > 0)
+      this.renderShardBox(this.bodyEl);
     if (this.tab === "meaning") {
       this.renderDefinitions();
       return;
@@ -1564,4 +1649,4 @@ const RhymesView = class extends ItemView {
   }
 };
 
-export { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES };
+export { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES, renderShardList, shardTitle };

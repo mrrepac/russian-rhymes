@@ -6370,6 +6370,53 @@ var POS_LABEL = () => ({
 var lexCat = (f) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
 var clausulaOf = (word, s) => countSyllables(word.slice(s));
 var clausula = (e) => clausulaOf(e.word, e.s);
+function shardTitle(name) {
+  const titles = {
+    words: t("shardWords"),
+    rhymes: t("shardRhymes"),
+    forms: t("shardForms"),
+    definitions: t("shardDefinitions"),
+    synonyms: t("shardSynonyms"),
+    antonyms: t("shardAntonyms"),
+    associations: t("shardAssociations"),
+    hypernyms: t("shardHypernyms"),
+    hyponyms: t("shardHyponyms"),
+    related: t("shardRelated"),
+    idioms: t("shardIdioms"),
+    proverbs: t("shardProverbs"),
+    metagrams: t("shardMetagrams"),
+    anagrams: t("shardAnagrams"),
+    lemmas: t("shardLemmas"),
+    phrases: t("shardPhrases"),
+    yo: t("shardYo"),
+    generator: t("shardGenerator")
+  };
+  return titles[name] || name;
+}
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("unitMb")}`;
+  return `${Math.max(1, Math.round(bytes / 1024))} ${t("unitKb")}`;
+}
+function renderShardList(host, inv, withTotal) {
+  let have = 0, bytes = 0;
+  for (const s of inv) {
+    const row = host.createDiv({ cls: "rr-shardrow" });
+    row.createSpan({ cls: "rr-shard-name", text: shardTitle(s.name) });
+    if (s.present && !s.broken) {
+      have++;
+      bytes += s.size;
+      row.createSpan({ cls: "rr-shard-size", text: fmtSize(s.size) });
+    } else {
+      row.addClass("rr-shard-bad");
+      row.createSpan({ cls: "rr-shard-size", text: s.broken ? t("invBroken") : t("invMissing") });
+    }
+  }
+  if (withTotal)
+    host.createDiv({ cls: "rr-shard-note", text: `${t("invTotal")} ${have}/${inv.length} \xB7 ${fmtSize(bytes)}` });
+  if (have < inv.length)
+    host.createDiv({ cls: "rr-shard-note rr-shard-bad", text: t("invHint") });
+}
 var CLAUS_LABEL = () => ({
   1: t("clausM"),
   2: t("clausF"),
@@ -6894,6 +6941,24 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const btn = box.createEl("button", { cls: "rr-add-btn", text: t("dlDict") });
     const prog = box.createDiv({ cls: "rr-dl-progress" });
     btn.addEventListener("click", () => void this.downloadFromPanel(btn, prog));
+    this.renderShardBox(box);
+  }
+  /**
+   * Свёрнутый список файлов словаря. Тот же, что в настройках, но замечают недостачу
+   * именно тут: вкладка пуста, и вопрос «а всё ли скачалось» возникает в панели, а не
+   * в настройках. Читается с диска, поэтому заголовок и строки появляются после ответа.
+   */
+  renderShardBox(host) {
+    const box = host.createEl("details", { cls: "rr-shards-box" });
+    const sum = box.createEl("summary", { cls: "rr-shards-sum", text: t("invFiles") });
+    const listEl = box.createDiv({ cls: "rr-shards" });
+    listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
+    void this.plugin.dict.inventory().then((inv) => {
+      const have = inv.filter((s) => s.present && !s.broken).length;
+      sum.setText(`${t("invFiles")}: ${have}/${inv.length}`);
+      listEl.empty();
+      renderShardList(listEl, inv, false);
+    });
   }
   /** Скачивание словаря по кнопке с экрана «нет словаря». */
   async downloadFromPanel(btn, prog) {
@@ -7189,6 +7254,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     this.renderWordHeader();
     this.renderTabs(new Set(this.availableTabs()));
+    if (this.plugin.dict.missingShards.length > 0)
+      this.renderShardBox(this.bodyEl);
     if (this.tab === "meaning") {
       this.renderDefinitions();
       return;
@@ -7947,34 +8014,6 @@ var DEFAULT_SETTINGS = {
 };
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
-function shardTitle(name) {
-  const titles = {
-    words: t("shardWords"),
-    rhymes: t("shardRhymes"),
-    forms: t("shardForms"),
-    definitions: t("shardDefinitions"),
-    synonyms: t("shardSynonyms"),
-    antonyms: t("shardAntonyms"),
-    associations: t("shardAssociations"),
-    hypernyms: t("shardHypernyms"),
-    hyponyms: t("shardHyponyms"),
-    related: t("shardRelated"),
-    idioms: t("shardIdioms"),
-    proverbs: t("shardProverbs"),
-    metagrams: t("shardMetagrams"),
-    anagrams: t("shardAnagrams"),
-    lemmas: t("shardLemmas"),
-    phrases: t("shardPhrases"),
-    yo: t("shardYo"),
-    generator: t("shardGenerator")
-  };
-  return titles[name] || name;
-}
-function fmtSize(bytes) {
-  if (bytes >= 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("unitMb")}`;
-  return `${Math.max(1, Math.round(bytes / 1024))} ${t("unitKb")}`;
-}
 var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   constructor(app, manifest) {
     super(app, manifest);
@@ -7989,16 +8028,17 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     this.lastFollowKey = "";
     this.badWarned = "";
     this.missingWarned = "";
+    this.viewClaim = null;
   }
   async onload() {
     let _a;
-    await this.loadSettings();
     this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
+    this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
+    await this.loadSettings();
     this.syncLocalManifest();
     this.dict.setLocalDir(this.settings.localDictDir);
     this.dict.setMainDir(this.settings.mainDictDir);
     this.applyDictDirStyle();
-    this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
     this.addRibbonIcon("feather", t("cmdOpen"), () => void this.activateView(null));
     this.addCommand({
       id: "open-panel",
@@ -8392,18 +8432,44 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Вкладка панели всегда существует в правом сайдбаре (урок мобильной версии Songwriter). */
   async ensureViewInSidebar(reveal) {
-    let _a;
-    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
-    let leaf = (_a = existing[0]) != null ? _a : null;
-    if (!leaf) {
-      leaf = this.app.workspace.getRightLeaf(false);
-      if (!leaf)
-        return null;
-      await leaf.setViewState({ type: VIEW_TYPE_RHYMES, active: false });
-    }
+    const leaf = await this.claimViewLeaf();
+    if (!leaf)
+      return null;
     if (reveal)
       await this.app.workspace.revealLeaf(leaf);
     return leaf;
+  }
+  /**
+   * Единственная вкладка панели: найденная, иначе созданная. Два обстоятельства, из-за
+   * которых их заводилось две. Первое: создание идёт через await, поэтому два вызова
+   * подряд (старт и тут же нажатие на ленту) оба видели «вкладки нет» — теперь второй
+   * ждёт то же обещание. Второе: лишние вкладки всё равно могли остаться от прошлых
+   * запусков, поэтому найденные сверх первой закрываем — панель по замыслу одна.
+   */
+  claimViewLeaf() {
+    if (this.viewClaim !== null)
+      return this.viewClaim;
+    const claim = (async () => {
+      const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
+      for (const extra of existing.slice(1))
+        extra.detach();
+      if (existing.length > 0)
+        return existing[0];
+      const leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf)
+        return null;
+      await leaf.setViewState({ type: VIEW_TYPE_RHYMES, active: false });
+      return leaf;
+    })();
+    this.viewClaim = claim;
+    void claim.then(() => {
+      if (this.viewClaim === claim)
+        this.viewClaim = null;
+    }, () => {
+      if (this.viewClaim === claim)
+        this.viewClaim = null;
+    });
+    return claim;
   }
   async activateView(word) {
     const leaf = await this.ensureViewInSidebar(true);
@@ -8654,7 +8720,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     const fill = () => {
       void this.plugin.dict.inventory().then((inv) => {
         listEl.empty();
-        this.fillInventory(listEl, inv);
+        renderShardList(listEl, inv, true);
       });
     };
     setting.addExtraButton((btn) => {
@@ -8663,25 +8729,6 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     });
     fill();
     return () => listEl.remove();
-  }
-  fillInventory(listEl, inv) {
-    let have = 0, bytes = 0;
-    for (const s of inv) {
-      const row = listEl.createDiv({ cls: "rr-shardrow" });
-      row.createSpan({ cls: "rr-shard-name", text: shardTitle(s.name) });
-      if (s.present && !s.broken) {
-        have++;
-        bytes += s.size;
-        row.createSpan({ cls: "rr-shard-size", text: fmtSize(s.size) });
-      } else {
-        row.addClass("rr-shard-bad");
-        row.createSpan({ cls: "rr-shard-size", text: s.broken ? t("invBroken") : t("invMissing") });
-      }
-    }
-    const total = listEl.createDiv({ cls: "rr-shard-note" });
-    total.setText(`${t("invTotal")} ${have}/${inv.length} \xB7 ${fmtSize(bytes)}`);
-    if (have < inv.length)
-      listEl.createDiv({ cls: "rr-shard-note rr-shard-bad", text: t("invHint") });
   }
   renderDictSection(setting, group, kind, dicts) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });

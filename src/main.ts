@@ -1,9 +1,9 @@
 import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
-import type { App, Debouncer, Editor, PluginManifest, Setting, SettingDefinitionItem, SettingGroup, TAbstractFile, TFolder } from "obsidian";
-import type { DictKind, LocalDict, ShardInfo } from "./dict";
+import type { App, Debouncer, Editor, PluginManifest, Setting, SettingDefinitionItem, SettingGroup, TAbstractFile, TFolder, WorkspaceLeaf } from "obsidian";
+import type { DictKind, LocalDict } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
-import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
+import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES, renderShardList, shardTitle } from "./view";
 import { convertDsl } from "./dsl";
 
 /** Настройки плагина, как они лежат в data.json. */
@@ -57,40 +57,6 @@ const DEFAULT_SETTINGS = {
 };
 const FOLLOW_DELAY_MS = 500;
 const MIN_FOLLOW_LEN = 3;
-/**
- * Название шарда для настроек и уведомлений. Перечислено вручную, а не собрано из ключа:
- * t() принимает только существующие ключи, и склеенный ключ такой проверки не проходит.
- * Таблица строится на каждый вызов — язык берётся из moment в момент обращения.
- */
-function shardTitle(name: string) {
-  const titles: Record<string, string> = {
-    words: t("shardWords"),
-    rhymes: t("shardRhymes"),
-    forms: t("shardForms"),
-    definitions: t("shardDefinitions"),
-    synonyms: t("shardSynonyms"),
-    antonyms: t("shardAntonyms"),
-    associations: t("shardAssociations"),
-    hypernyms: t("shardHypernyms"),
-    hyponyms: t("shardHyponyms"),
-    related: t("shardRelated"),
-    idioms: t("shardIdioms"),
-    proverbs: t("shardProverbs"),
-    metagrams: t("shardMetagrams"),
-    anagrams: t("shardAnagrams"),
-    lemmas: t("shardLemmas"),
-    phrases: t("shardPhrases"),
-    yo: t("shardYo"),
-    generator: t("shardGenerator")
-  };
-  return titles[name] || name;
-}
-/** Размер файла человеку: мегабайты с десятой, мелочь — в килобайтах. */
-function fmtSize(bytes: number) {
-  if (bytes >= 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("unitMb")}`;
-  return `${Math.max(1, Math.round(bytes / 1024))} ${t("unitKb")}`;
-}
 const RussianRhymesPlugin = class extends Plugin {
   settings: RhymesSettings;
   userStress: Record<string, number>;
@@ -106,6 +72,7 @@ const RussianRhymesPlugin = class extends Plugin {
   lastFollowKey: string;
   badWarned: string;
   missingWarned: string;
+  viewClaim: Promise<WorkspaceLeaf | null> | null;
 
   constructor(app: App, manifest: PluginManifest) {
     super(app, manifest);
@@ -127,16 +94,22 @@ const RussianRhymesPlugin = class extends Plugin {
     this.badWarned = "";
     // то же про недостающие файлы самого словаря
     this.missingWarned = "";
+    // идёт ли прямо сейчас создание вкладки панели (см. claimViewLeaf)
+    this.viewClaim = null;
   }
   async onload() {
     let _a;
-    await this.loadSettings();
+    // Словарь и вид — до первого await. Пока читается data.json, Obsidian успевает
+    // восстановить раскладку, и сохранённая вкладка панели должна найти свой тип
+    // зарегистрированным: иначе она в панель не превращается, а onLayoutReady заводит
+    // рядом вторую. На телефоне загрузка медленнее, там это и вылезло двумя вкладками
     this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
+    this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
+    await this.loadSettings();
     this.syncLocalManifest();
     this.dict.setLocalDir(this.settings.localDictDir);
     this.dict.setMainDir(this.settings.mainDictDir);
     this.applyDictDirStyle();
-    this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
     this.addRibbonIcon("feather", t("cmdOpen"), () => void this.activateView(null));
     this.addCommand({
       id: "open-panel",
@@ -539,18 +512,46 @@ const RussianRhymesPlugin = class extends Plugin {
   }
   /** Вкладка панели всегда существует в правом сайдбаре (урок мобильной версии Songwriter). */
   async ensureViewInSidebar(reveal: boolean) {
-    let _a;
-    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
-    let leaf = (_a = existing[0]) != null ? _a : null;
-    if (!leaf) {
-      leaf = this.app.workspace.getRightLeaf(false);
-      if (!leaf)
-        return null;
-      await leaf.setViewState({ type: VIEW_TYPE_RHYMES, active: false });
-    }
+    const leaf = await this.claimViewLeaf();
+    if (!leaf)
+      return null;
     if (reveal)
       await this.app.workspace.revealLeaf(leaf);
     return leaf;
+  }
+  /**
+   * Единственная вкладка панели: найденная, иначе созданная. Два обстоятельства, из-за
+   * которых их заводилось две. Первое: создание идёт через await, поэтому два вызова
+   * подряд (старт и тут же нажатие на ленту) оба видели «вкладки нет» — теперь второй
+   * ждёт то же обещание. Второе: лишние вкладки всё равно могли остаться от прошлых
+   * запусков, поэтому найденные сверх первой закрываем — панель по замыслу одна.
+   */
+  claimViewLeaf() {
+    // явное сравнение, а не проверка на истинность: поле — обещание либо null
+    if (this.viewClaim !== null)
+      return this.viewClaim;
+    const claim = (async () => {
+      const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
+      for (const extra of existing.slice(1))
+        extra.detach();
+      if (existing.length > 0)
+        return existing[0];
+      const leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf)
+        return null;
+      await leaf.setViewState({ type: VIEW_TYPE_RHYMES, active: false });
+      return leaf;
+    })();
+    this.viewClaim = claim;
+    // держим обещание только на время создания: вкладку могут и закрыть, тогда нужна новая
+    void claim.then(() => {
+      if (this.viewClaim === claim)
+        this.viewClaim = null;
+    }, () => {
+      if (this.viewClaim === claim)
+        this.viewClaim = null;
+    });
+    return claim;
   }
   async activateView(word: string | null) {
     const leaf = await this.ensureViewInSidebar(true);
@@ -811,7 +812,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     const fill = () => {
       void this.plugin.dict.inventory().then((inv) => {
         listEl.empty();
-        this.fillInventory(listEl, inv);
+        renderShardList(listEl, inv, true);
       });
     };
     setting.addExtraButton((btn) => {
@@ -821,27 +822,6 @@ const RhymesSettingTab = class extends PluginSettingTab {
     fill();
     // строку могут перерисовать в одиночку, а список висит рядом с ней, не внутри
     return () => listEl.remove();
-  }
-  fillInventory(listEl: HTMLElement, inv: ShardInfo[]) {
-    let have = 0, bytes = 0;
-    for (const s of inv) {
-      const row = listEl.createDiv({ cls: "rr-shardrow" });
-      row.createSpan({ cls: "rr-shard-name", text: shardTitle(s.name) });
-      if (s.present && !s.broken) {
-        have++;
-        bytes += s.size;
-        row.createSpan({ cls: "rr-shard-size", text: fmtSize(s.size) });
-      } else {
-        row.addClass("rr-shard-bad");
-        // «повреждён» и «нет файла» — разные беды: первый чинится перекачиванием этого
-        // файла, второй мог и не скачаться вовсе
-        row.createSpan({ cls: "rr-shard-size", text: s.broken ? t("invBroken") : t("invMissing") });
-      }
-    }
-    const total = listEl.createDiv({ cls: "rr-shard-note" });
-    total.setText(`${t("invTotal")} ${have}/${inv.length} · ${fmtSize(bytes)}`);
-    if (have < inv.length)
-      listEl.createDiv({ cls: "rr-shard-note rr-shard-bad", text: t("invHint") });
   }
   renderDictSection(setting: Setting, group: SettingGroup, kind: DictKind, dicts: LocalDict[]) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });

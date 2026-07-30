@@ -770,6 +770,31 @@
   transform: translateY(1px);
 }
 
+/* тот же список в панели — свёрнутой строкой, как «Формы слова» */
+.rr-shards-box {
+  margin: var(--size-2-3) 0;
+  padding: var(--size-2-2) var(--size-4-1);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.rr-shards-sum {
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  list-style-position: inside;
+}
+
+.rr-shards-sum:hover {
+  color: var(--text-normal);
+}
+
+.rr-shards-box .rr-shards {
+  margin-bottom: 0;
+}
+
 /* инвентарь основного словаря в настройках: название раздела и размер файла на диске */
 .rr-shards {
   display: flex;
