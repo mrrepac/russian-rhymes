@@ -796,6 +796,48 @@
   margin-bottom: 0;
 }
 
+/* копилка: свёрнутый блок под разделами, устроен так же, как список файлов словаря */
+.rr-stash-box {
+  margin: var(--size-2-3) 0;
+  padding: var(--size-2-2) var(--size-4-1);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.rr-stash-sum {
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  list-style-position: inside;
+}
+
+.rr-stash-sum:hover {
+  color: var(--text-normal);
+}
+
+.rr-stash,
+.rr-stash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  margin-top: var(--size-2-3);
+}
+
+/* слово копилки лежит на её фоне — первичный, чтобы отличалось от чипов выдачи */
+.rr-stash-chip {
+  background: var(--background-primary);
+}
+
+/* ручные ударения в настройках — те же чипы, снимаются кликом */
+.rr-stresses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  margin: 0 0 var(--size-4-3) 0;
+}
+
 /* инвентарь основного словаря в настройках: название раздела и размер файла на диске */
 .rr-shards {
   display: flex;

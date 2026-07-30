@@ -3,6 +3,7 @@ import type { App, Debouncer, Editor, PluginManifest, Setting, SettingDefinition
 import type { DictKind, LocalDict } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
+import { markStress } from "./phonetics";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES, renderShardList, shardTitle } from "./view";
 import { convertDsl } from "./dsl";
 
@@ -20,6 +21,8 @@ export interface RhymesSettings {
   filterClaus: number;
   filterPos: string;
   filterKind: string;
+  filterMood: string;
+  filterSem: string;
   filterSemantic: boolean;
   localDictDir: string;
   hideDictDir: boolean;
@@ -46,6 +49,8 @@ const DEFAULT_SETTINGS = {
   filterClaus: 0,
   filterPos: "",
   filterKind: "all",
+  filterMood: "",
+  filterSem: "",
   filterSemantic: false,
   localDictDir: "Словари рифм",
   hideDictDir: true,
@@ -132,6 +137,51 @@ const RussianRhymesPlugin = class extends Plugin {
       name: t("cmdFollow"),
       callback: () => void this.setFollow(!this.settings.followCursor)
     });
+    // копилка набирается кликами, но разбирать её удобнее с клавиатуры — а на телефоне
+    // команды ещё и единственный способ повесить действие на что-то кроме кнопки в панели.
+    // checkCallback: пустая копилка — нечего вставлять, команду и показывать незачем
+    const withStash = (act: (v: InstanceType<typeof RhymesView>) => void) => (checking: boolean) => {
+      const v = this.getRhymesView();
+      if (!v || v.stash.length === 0)
+        return false;
+      if (!checking)
+        act(v);
+      return true;
+    };
+    this.addCommand({
+      id: "insert-stash",
+      name: t("cmdStashInsert"),
+      checkCallback: withStash((v) => v.insertList(v.stashText()))
+    });
+    this.addCommand({
+      id: "copy-stash",
+      name: t("cmdStashCopy"),
+      checkCallback: withStash((v) => {
+        void v.writeClipboard(v.stashText()).then((ok) => {
+          new Notice(ok ? t("stashCopied") + v.stash.length : t("copyFail"));
+        });
+      })
+    });
+    this.addCommand({
+      id: "clear-stash",
+      name: t("cmdStashClear"),
+      checkCallback: withStash((v) => v.stashClear())
+    });
+    // Ctrl+←/→ в панели листают разделы, но переназначить их было нельзя — теперь можно
+    for (const [id, name, dir] of [["next-tab", t("cmdNextTab"), 1], ["prev-tab", t("cmdPrevTab"), -1]] as const) {
+      this.addCommand({
+        id,
+        name,
+        checkCallback: (checking: boolean) => {
+          const v = this.getRhymesView();
+          if (!v || !v.hasWord())
+            return false;
+          if (!checking)
+            v.cycleTab(dir);
+          return true;
+        }
+      });
+    }
     this.registerDomEvent(document, "selectionchange", () => {
       if (this.settings.followCursor)
         this.followSync();
@@ -645,7 +695,8 @@ const RhymesSettingTab = class extends PluginSettingTab {
           },
           { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
           { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") },
-          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) }
+          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) },
+          { name: t("stressTitle"), desc: t("stressDesc"), render: (setting, group) => this.renderStresses(setting, group) }
         ]
       },
       {
@@ -826,6 +877,48 @@ const RhymesSettingTab = class extends PluginSettingTab {
     });
     fill();
     // строку могут перерисовать в одиночку, а список висит рядом с ней, не внутри
+    return () => listEl.remove();
+  }
+  /**
+   * Ручные ударения. Клик по гласной запоминается навсегда и лежит в data.json, где его
+   * никто не видит: ошиблись один раз — и слово с тех пор рифмуется не туда, а отменить
+   * это можно было только повторным кликом по правильной гласной, если вспомнить, где.
+   * Здесь их видно списком, каждое снимается по клику.
+   */
+  renderStresses(setting: Setting, group: SettingGroup) {
+    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
+    if (!host)
+      return;
+    const listEl = host.createDiv({ cls: "rr-stresses" });
+    const fill = () => {
+      listEl.empty();
+      const words = Object.keys(this.plugin.userStress).sort();
+      if (words.length === 0) {
+        listEl.createDiv({ cls: "rr-shard-note", text: t("stressEmpty") });
+        return;
+      }
+      for (const w of words) {
+        const chip = listEl.createSpan({ cls: "rr-chip rr-stress-chip", text: markStress(w, this.plugin.userStress[w]) });
+        chip.title = t("stressRemoveHint");
+        chip.addEventListener("click", () => {
+          this.plugin.setUserStress(w, null);
+          void this.plugin.saveSettings();
+          this.plugin.refreshPanel();
+          fill();
+        });
+      }
+    };
+    setting.addExtraButton((btn) => {
+      btn.setIcon("rotate-ccw").setTooltip(t("stressReset"));
+      btn.onClick(() => {
+        for (const w of Object.keys(this.plugin.userStress))
+          this.plugin.setUserStress(w, null);
+        void this.plugin.saveSettings();
+        this.plugin.refreshPanel();
+        fill();
+      });
+    });
+    fill();
     return () => listEl.remove();
   }
   renderDictSection(setting: Setting, group: SettingGroup, kind: DictKind, dicts: LocalDict[]) {

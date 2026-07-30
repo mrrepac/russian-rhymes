@@ -8,10 +8,12 @@ An **offline Russian rhyming dictionary** for [Obsidian](https://obsidian.md): r
 
 - **Rhymes by sound, not by spelling** — a phonetic rhyme key (stress-tail normalization: vowel reduction, final devoicing, consonant clusters) groups words the way they actually sound. Four tiers: exact · near · slant (consonance) · assonance, plus alliteration.
 - **Follow the cursor** — the panel keeps showing rhymes for the last word of the line you are typing; unfinished and unknown words are skipped, so the list never flickers.
-- **Stress marks** — every word is shown with its stress; click any vowel to move the stress and re-rank the rhymes. Your manual choices are remembered.
+- **Stress marks** — every word is shown with its stress; click any vowel to move the stress and re-rank the rhymes. Your manual choices are remembered, and the list of remembered ones sits in the settings, one click to forget.
 - **Meaning tab** — definitions with usage examples and etymology (from Russian Wiktionary), plus a collapsible word-forms table.
 - **Associations tab** — synonyms, antonyms, hypernyms/hyponyms, related words, set phrases, proverbs, associations, metagrams and anagrams, each in a collapsible section.
 - **"By meaning" filter** — highlight or isolate rhymes that are also related in meaning.
+- **Filter by mark** — the word's mood (light · dark · neutral) and its semantic category (person, place, thing, animal… or just "concrete"/"abstract"). Each option carries a count, so you see how many rhymes it keeps before you pick it. Not every word is marked, so only the marks present in the current list are offered.
+- **Stash** — everything you copied or inserted during the session collects into a folded list under the tabs. One button drops it into the note, one word per line.
 - **Fully offline** — after a one-time dictionary download, everything works with no network.
 - **Light on memory** — the two largest parts of the dictionary (definitions and word forms, ~360 MB of text) are read from disk in compressed blocks instead of being held in RAM: a lookup touches tens of kilobytes and only a ~50 KB index stays resident. You also choose what is preloaded at startup — nothing, rhymes, or rhymes and meanings.
 - **Personal dictionaries** — import your own Lingvo/GoldenDict `.dsl` / `.dsl.dz` files and reorder them.
@@ -28,9 +30,9 @@ In the panel: single-click a word to copy it, double-click to jump into its rhym
 
 ## The dictionary (one-time download)
 
-Obsidian installs only the plugin code (`main.js`, `manifest.json`, `styles.css`). The dictionary itself (~73 MB) is **downloaded on first use** from this repository's GitHub release:
+Obsidian installs only the plugin code (`main.js`, `manifest.json`, `styles.css`). The dictionary itself (~76 MB) is **downloaded on first use** from this repository's GitHub release:
 
-- When you open the panel without a dictionary, tap **Download dictionary (~72 MB)** — a progress indicator is shown.
+- When you open the panel without a dictionary, tap **Download dictionary (~76 MB)** — a progress indicator is shown.
 - The files are stored inside the plugin folder and never leave your device afterwards.
 - The download URL is configurable in Settings if you want to self-host the dictionary.
 
@@ -61,9 +63,9 @@ The **plugin code** is MIT-licensed (see [LICENSE](LICENSE)). The **dictionary d
 - Word stress & frequencies — [Koziev/NLP_Datasets](https://github.com/Koziev/NLP_Datasets) (`all_accents`, `term2freq`) — **CC0**
 - Inflection paradigms & homograph variants — [OpenRussian.org](https://en.openrussian.org/) via [Badestrand/russian-dictionary](https://github.com/Badestrand/russian-dictionary) — **CC BY-SA 4.0**
 - Definitions, word forms, synonyms, antonyms, etymology, relations, phrases, idioms, proverbs, metagrams, anagrams, and modern vocabulary — **Russian Wiktionary** via [kaikki.org](https://kaikki.org/) — **CC BY-SA 4.0**
-- Word associations — [KartaSlov](https://kartaslov.ru/) ([dkulagin/kartaslov](https://github.com/dkulagin/kartaslov)) — **CC BY-NC-SA 4.0**
+- Word associations, sentiment (KartaSlovSent) and semantic categories (open_semantics) — [KartaSlov](https://kartaslov.ru/) ([dkulagin/kartaslov](https://github.com/dkulagin/kartaslov)) — **CC BY-NC-SA 4.0**
 
-Because the compiled data includes ShareAlike sources, the dictionary as a whole is distributed under **CC BY-SA 4.0** (with the association layer additionally **NonCommercial**, CC BY-NC-SA 4.0). Attribution for the definition and association sources is also shown in-app.
+Because the compiled data includes ShareAlike sources, the dictionary as a whole is distributed under **CC BY-SA 4.0** (with the KartaSlov layers — associations, sentiment, semantic categories — additionally **NonCommercial**, CC BY-NC-SA 4.0). Attribution for the definition and association sources is also shown in-app.
 
 ## Development
 

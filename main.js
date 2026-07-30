@@ -4855,6 +4855,8 @@ var RhymeDict = class {
     this.chars = [...new Set(CHARACTERS)];
     this.lemmas = null;
     this.phrasesIdx = null;
+    this.sentiment = null;
+    this.semantics = null;
     this.yoMap = /* @__PURE__ */ new Map();
     this.local = /* @__PURE__ */ new Map();
     this.localBad = /* @__PURE__ */ new Set();
@@ -5056,6 +5058,8 @@ var RhymeDict = class {
       { name: "anagrams", variants: [["anagrams.txt.gz"]], load: (raw) => this.anagrams = buildIndex(raw) },
       { name: "lemmas", variants: [["lemmas.txt.gz"]], load: (raw) => this.lemmas = buildIndex(raw) },
       { name: "phrases", variants: [["phrases.txt.gz"]], load: (raw) => this.phrasesIdx = buildIndex(raw) },
+      { name: "sentiment", variants: [["sentiment.txt.gz"]], load: (raw) => this.sentiment = buildIndex(raw) },
+      { name: "semantics", variants: [["semantics.txt.gz"]], load: (raw) => this.semantics = buildIndex(raw) },
       { name: "yo", variants: [["yo.txt.gz"]], load: (raw) => this.parseYo(raw) },
       { name: "generator", variants: [["generator.txt.gz"]], load: (raw) => this.gen = this.parseGenerator(raw) }
     ];
@@ -5529,6 +5533,37 @@ var RhymeDict = class {
       return [];
     const line = findLine(this.lemmas, word + "	");
     return line ? line.slice(word.length + 1).split(",") : [];
+  }
+  /**
+   * Помета из шарда вида «слово\tодин код»: сначала по самому слову, потом по лемме.
+   * Лемма тут решает всё: КартаСлов размечает начальную форму, а в выдаче стоят словоформы —
+   * без обращения к лемме размечено 8% списка рифм, с ней 40%. Своя помета важнее лемминой
+   * («пирога» — лодка, хотя лемма «пирог» — еда).
+   */
+  traitOf(idx, word) {
+    if (!idx)
+      return "";
+    const at = (w) => {
+      const line = findLine(idx, w + "	");
+      return line ? line.slice(w.length + 1) : "";
+    };
+    const own = at(word);
+    if (own)
+      return own;
+    for (const lm of this.lemmasOf(word).slice(0, 2)) {
+      const viaLemma = at(lm);
+      if (viaLemma)
+        return viaLemma;
+    }
+    return "";
+  }
+  /** Тональность слова: p светлое, n тёмное, u нейтральное, "" — не размечено. */
+  sentimentOf(word) {
+    return this.traitOf(this.sentiment, word);
+  }
+  /** Смысловая категория слова: код из SEM_KEYS, "" — не размечено. */
+  semanticsOf(word) {
+    return this.traitOf(this.semantics, word);
   }
   /** Простой формат личных DSL-словарей: "POS:толк1;толк2|POS:…" (без примеров/этимологии). */
   parseLocalGroups(rec) {
@@ -6005,14 +6040,14 @@ var import_obsidian2 = require("obsidian");
 var en = {
   panelTitle: "Russian Rhymes",
   searchPlaceholder: "double Ctrl+C on a word",
-  dictMissing: "Dictionary files not found. Tap the button below to download them (~72 MB).",
+  dictMissing: "Dictionary files not found. Tap the button below to download them (~76 MB).",
   dictLoading: "Loading dictionary\u2026",
   defsLoading: "Loading meanings and word forms\u2026",
   defsFailed: "Could not load meanings and word forms.",
   dlHeading: "Dictionary download",
   settingUrl: "Dictionary URL",
   settingUrlDesc: "Where to fetch the dictionary from when the dict/ folder is missing (e.g. on mobile). GitHub release base URL.",
-  dlDict: "Download dictionary (~72 MB)",
+  dlDict: "Download dictionary (~76 MB)",
   dlDesc: "Download the dictionary files into the plugin folder (needed on mobile / a fresh install).",
   dlBtn: "Download",
   dlProgress: "Downloading\u2026",
@@ -6174,19 +6209,59 @@ var en = {
   settingStartupDesc: "The whole dictionary takes about 500 MB of memory, 360 MB of which are meanings and word forms. Anything not preloaded is fetched on first use. Loading less takes effect after the next restart.",
   startupNone: "Nothing",
   startupRhymes: "Rhymes (~140 MB)",
-  startupFull: "Rhymes and meanings (~500 MB)"
+  startupFull: "Rhymes and meanings (~500 MB)",
+  shardSentiment: "Word mood",
+  shardSemantics: "Semantic categories",
+  traitLabel: "mark",
+  traitMood: "Mood",
+  traitSem: "Category",
+  traitHint: "Mood and semantic category of the word (KartaSlov). Not every word is marked \u2014 the number next to an option is how many rhymes in the current list it keeps.",
+  moodLight: "light",
+  moodDark: "dark",
+  moodPlain: "neutral",
+  semConcreteAll: "concrete",
+  semAbstractAll: "abstract",
+  semHuman: "person",
+  semThing: "thing",
+  semPlace: "place",
+  semAnimal: "animal",
+  semPlant: "plant",
+  semFood: "food",
+  semSubstance: "substance",
+  semTransport: "vehicle",
+  semAnatomy: "body part",
+  semConstruction: "structure",
+  semAbstract: "abstract",
+  semAction: "action",
+  stashTitle: "Stash",
+  stashInsert: "Insert into the note",
+  stashCopy: "Copy all",
+  stashClear: "Empty",
+  stashCopied: "Copied words: ",
+  stashInserted: "Inserted words: ",
+  stashRemoveHint: "Click \u2014 remove from the stash",
+  cmdStashInsert: "Insert the stash into the note",
+  cmdStashCopy: "Copy the stash",
+  cmdStashClear: "Empty the stash",
+  cmdNextTab: "Next section",
+  cmdPrevTab: "Previous section",
+  stressTitle: "Manual stress marks",
+  stressDesc: "Words whose stress you moved by clicking a vowel. The choice is remembered for good and rhymes are looked up by it \u2014 click a word here to forget it, or use the button to forget them all.",
+  stressEmpty: "nothing yet \u2014 the stress is taken from the dictionary",
+  stressRemoveHint: "Click \u2014 back to the dictionary stress",
+  stressReset: "Forget all"
 };
 var ru = {
   panelTitle: "\u0420\u0438\u0444\u043C\u044B",
   searchPlaceholder: "\u0434\u0432\u0430\u0436\u0434\u044B Ctrl+C \u043D\u0430 \u0441\u043B\u043E\u0432\u0435",
-  dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~72 \u041C\u0411).",
+  dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~76 \u041C\u0411).",
   dictLoading: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F\u2026",
   defsLoading: "\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u044E\u0442\u0441\u044F \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430\u2026",
   defsFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430.",
   dlHeading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   settingUrl: "\u0410\u0434\u0440\u0435\u0441 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   settingUrlDesc: "\u041E\u0442\u043A\u0443\u0434\u0430 \u0441\u043A\u0430\u0447\u0438\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C, \u0435\u0441\u043B\u0438 \u043F\u0430\u043F\u043A\u0438 dict/ \u043D\u0435\u0442 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u043D\u0430 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0435). \u0411\u0430\u0437\u0430 URL GitHub-\u0440\u0435\u043B\u0438\u0437\u0430.",
-  dlDict: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C (~72 \u041C\u0411)",
+  dlDict: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C (~76 \u041C\u0411)",
   dlDesc: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0444\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u0432 \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 (\u043D\u0443\u0436\u043D\u043E \u043D\u0430 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0435 / \u043F\u0440\u0438 \u043D\u043E\u0432\u043E\u0439 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0435).",
   dlBtn: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C",
   dlProgress: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435\u2026",
@@ -6348,7 +6423,47 @@ var ru = {
   settingStartupDesc: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0446\u0435\u043B\u0438\u043A\u043E\u043C \u0437\u0430\u043D\u0438\u043C\u0430\u0435\u0442 \u043E\u043A\u043E\u043B\u043E 500 \u041C\u0411 \u043F\u0430\u043C\u044F\u0442\u0438, \u0438\u0437 \u043D\u0438\u0445 360 \u041C\u0411 \u2014 \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430. \u041D\u0435\u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043D\u043E\u0435 \u043F\u043E\u0434\u0442\u044F\u043D\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0435\u0440\u0432\u043E\u043C \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0438. \u0423\u043C\u0435\u043D\u044C\u0448\u0435\u043D\u0438\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 \u0441\u043E \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0437\u0430\u043F\u0443\u0441\u043A\u0430.",
   startupNone: "\u041D\u0438\u0447\u0435\u0433\u043E",
   startupRhymes: "\u0420\u0438\u0444\u043C\u044B (~140 \u041C\u0411)",
-  startupFull: "\u0420\u0438\u0444\u043C\u044B \u0438 \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u044F (~500 \u041C\u0411)"
+  startupFull: "\u0420\u0438\u0444\u043C\u044B \u0438 \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u044F (~500 \u041C\u0411)",
+  shardSentiment: "\u041D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435 \u0441\u043B\u043E\u0432",
+  shardSemantics: "\u0421\u043C\u044B\u0441\u043B\u043E\u0432\u044B\u0435 \u043A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u0438",
+  traitLabel: "\u043F\u043E\u043C\u0435\u0442\u0430",
+  traitMood: "\u041D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435",
+  traitSem: "\u041A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u044F",
+  traitHint: "\u041D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435 \u0438 \u0441\u043C\u044B\u0441\u043B\u043E\u0432\u0430\u044F \u043A\u0430\u0442\u0435\u0433\u043E\u0440\u0438\u044F \u0441\u043B\u043E\u0432\u0430 (\u041A\u0430\u0440\u0442\u0430\u0421\u043B\u043E\u0432). \u0420\u0430\u0437\u043C\u0435\u0447\u0435\u043D\u044B \u043D\u0435 \u0432\u0441\u0435 \u0441\u043B\u043E\u0432\u0430 \u2014 \u0447\u0438\u0441\u043B\u043E \u0440\u044F\u0434\u043E\u043C \u0441 \u043F\u0443\u043D\u043A\u0442\u043E\u043C \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0438\u0444\u043C \u0438\u0437 \u0442\u0435\u043A\u0443\u0449\u0435\u0433\u043E \u0441\u043F\u0438\u0441\u043A\u0430 \u043E\u0441\u0442\u0430\u043D\u0435\u0442\u0441\u044F.",
+  moodLight: "\u0441\u0432\u0435\u0442\u043B\u044B\u0435",
+  moodDark: "\u0442\u0451\u043C\u043D\u044B\u0435",
+  moodPlain: "\u043D\u0435\u0439\u0442\u0440\u0430\u043B\u044C\u043D\u044B\u0435",
+  semConcreteAll: "\u043A\u043E\u043D\u043A\u0440\u0435\u0442\u043D\u043E\u0435",
+  semAbstractAll: "\u0430\u0431\u0441\u0442\u0440\u0430\u043A\u0442\u043D\u043E\u0435",
+  semHuman: "\u0447\u0435\u043B\u043E\u0432\u0435\u043A",
+  semThing: "\u043F\u0440\u0435\u0434\u043C\u0435\u0442",
+  semPlace: "\u043C\u0435\u0441\u0442\u043E",
+  semAnimal: "\u0436\u0438\u0432\u043E\u0442\u043D\u043E\u0435",
+  semPlant: "\u0440\u0430\u0441\u0442\u0435\u043D\u0438\u0435",
+  semFood: "\u0435\u0434\u0430",
+  semSubstance: "\u0432\u0435\u0449\u0435\u0441\u0442\u0432\u043E",
+  semTransport: "\u0442\u0440\u0430\u043D\u0441\u043F\u043E\u0440\u0442",
+  semAnatomy: "\u0447\u0430\u0441\u0442\u044C \u0442\u0435\u043B\u0430",
+  semConstruction: "\u0441\u043E\u043E\u0440\u0443\u0436\u0435\u043D\u0438\u0435",
+  semAbstract: "\u043E\u0442\u0432\u043B\u0435\u0447\u0451\u043D\u043D\u043E\u0435",
+  semAction: "\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435",
+  stashTitle: "\u041A\u043E\u043F\u0438\u043B\u043A\u0430",
+  stashInsert: "\u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443",
+  stashCopy: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0432\u0441\u0451",
+  stashClear: "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C",
+  stashCopied: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u043D\u043E \u0441\u043B\u043E\u0432: ",
+  stashInserted: "\u0412\u0441\u0442\u0430\u0432\u043B\u0435\u043D\u043E \u0441\u043B\u043E\u0432: ",
+  stashRemoveHint: "\u041A\u043B\u0438\u043A \u2014 \u0443\u0431\u0440\u0430\u0442\u044C \u0438\u0437 \u043A\u043E\u043F\u0438\u043B\u043A\u0438",
+  cmdStashInsert: "\u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044C \u043A\u043E\u043F\u0438\u043B\u043A\u0443 \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443",
+  cmdStashCopy: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u043A\u043E\u043F\u0438\u043B\u043A\u0443",
+  cmdStashClear: "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u043A\u043E\u043F\u0438\u043B\u043A\u0443",
+  cmdNextTab: "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B",
+  cmdPrevTab: "\u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0438\u0439 \u0440\u0430\u0437\u0434\u0435\u043B",
+  stressTitle: "\u0420\u0443\u0447\u043D\u044B\u0435 \u0443\u0434\u0430\u0440\u0435\u043D\u0438\u044F",
+  stressDesc: "\u0421\u043B\u043E\u0432\u0430, \u0443 \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u0432\u044B \u043F\u0435\u0440\u0435\u043D\u0435\u0441\u043B\u0438 \u0443\u0434\u0430\u0440\u0435\u043D\u0438\u0435 \u043A\u043B\u0438\u043A\u043E\u043C \u043F\u043E \u0433\u043B\u0430\u0441\u043D\u043E\u0439. \u0412\u044B\u0431\u043E\u0440 \u0437\u0430\u043F\u043E\u043C\u0438\u043D\u0430\u0435\u0442\u0441\u044F \u043D\u0430\u0432\u0441\u0435\u0433\u0434\u0430, \u0438 \u0440\u0438\u0444\u043C\u044B \u0438\u0449\u0443\u0442\u0441\u044F \u043F\u043E \u043D\u0435\u043C\u0443 \u2014 \u043A\u043B\u0438\u043A\u043D\u0438\u0442\u0435 \u043F\u043E \u0441\u043B\u043E\u0432\u0443, \u0447\u0442\u043E\u0431\u044B \u0437\u0430\u0431\u044B\u0442\u044C \u0435\u0433\u043E, \u0438\u043B\u0438 \u0441\u0431\u0440\u043E\u0441\u044C\u0442\u0435 \u0432\u0441\u0435 \u043A\u043D\u043E\u043F\u043A\u043E\u0439.",
+  stressEmpty: "\u043F\u043E\u043A\u0430 \u043F\u0443\u0441\u0442\u043E \u2014 \u0443\u0434\u0430\u0440\u0435\u043D\u0438\u044F \u0431\u0435\u0440\u0443\u0442\u0441\u044F \u0438\u0437 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
+  stressRemoveHint: "\u041A\u043B\u0438\u043A \u2014 \u0432\u0435\u0440\u043D\u0443\u0442\u044C \u0443\u0434\u0430\u0440\u0435\u043D\u0438\u0435 \u0438\u0437 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
+  stressReset: "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0432\u0441\u0435"
 };
 function t(key) {
   const lang = import_obsidian2.moment.locale();
@@ -6388,6 +6503,8 @@ function shardTitle(name) {
     anagrams: t("shardAnagrams"),
     lemmas: t("shardLemmas"),
     phrases: t("shardPhrases"),
+    sentiment: t("shardSentiment"),
+    semantics: t("shardSemantics"),
     yo: t("shardYo"),
     generator: t("shardGenerator")
   };
@@ -6423,11 +6540,38 @@ var CLAUS_LABEL = () => ({
   3: t("clausD"),
   4: t("clausH")
 });
+var MOOD_KEYS = ["p", "n", "u"];
+var MOOD_LABEL = () => ({
+  p: t("moodLight"),
+  n: t("moodDark"),
+  u: t("moodPlain")
+});
+var SEM_KEYS = ["h", "t", "p", "a", "r", "f", "s", "v", "b", "c", "x", "d"];
+var SEM_ABSTRACT = ["x", "d"];
+var SEM_LABEL = () => ({
+  h: t("semHuman"),
+  t: t("semThing"),
+  p: t("semPlace"),
+  a: t("semAnimal"),
+  r: t("semPlant"),
+  f: t("semFood"),
+  s: t("semSubstance"),
+  v: t("semTransport"),
+  b: t("semAnatomy"),
+  c: t("semConstruction"),
+  x: t("semAbstract"),
+  d: t("semAction")
+});
+var SEM_CONCRETE_ALL = "+";
+var SEM_ABSTRACT_ALL = "-";
 var PAGE = 50;
 var PAGE_MORE = 200;
 var POS_KEYS = ["", "n", "v", "a", "d", "i"];
 var KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
+var MOOD_FILTER_KEYS = ["", ...MOOD_KEYS];
+var SEM_FILTER_KEYS = ["", SEM_CONCRETE_ALL, SEM_ABSTRACT_ALL, ...SEM_KEYS];
 var STARTUP_KEYS = ["none", "rhymes", "full"];
+var STASH_MAX = 60;
 var LONG_PRESS_MS = 500;
 var LONG_PRESS_SLOP = 10;
 var insertHint = () => t(import_obsidian3.Platform.isMobile ? "insertHintTouch" : "insertHint");
@@ -6461,6 +6605,15 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.clausFilter = 0;
     this.clausOn = 0;
     this.posFilter = "";
+    this.moodFilter = "";
+    this.moodOn = "";
+    this.semFilter = "";
+    this.semOn = "";
+    this.moodMap = /* @__PURE__ */ new Map();
+    this.semMap = /* @__PURE__ */ new Map();
+    this.stash = [];
+    this.stashOpen = false;
+    this.stashHost = null;
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
     this.consAll = [];
@@ -6665,12 +6818,64 @@ var RhymesView = class extends import_obsidian3.ItemView {
       this.all = [];
       this.consAll = [];
       this.assonAll = [];
-      return;
+    } else {
+      this.all = this.plugin.dict.rhymesFor(this.word, this.stress);
+      const scan = this.plugin.dict.assonancesFor(this.word, this.stress);
+      this.consAll = scan.conson;
+      this.assonAll = scan.asson;
     }
-    this.all = this.plugin.dict.rhymesFor(this.word, this.stress);
-    const scan = this.plugin.dict.assonancesFor(this.word, this.stress);
-    this.consAll = scan.conson;
-    this.assonAll = scan.asson;
+    this.loadTraits();
+  }
+  /**
+   * Пометы всех кандидатов сразу. Считаем здесь, а не в passesFilter: фильтр вызывается на
+   * каждую перерисовку и на каждое слово списка, а поиск пометы — двоичный поиск плюс, при
+   * промахе, обращение к леммам. Списка нет — карты пустые, и капсулы не появятся.
+   */
+  loadTraits() {
+    this.moodMap = /* @__PURE__ */ new Map();
+    this.semMap = /* @__PURE__ */ new Map();
+    const dict = this.plugin.dict;
+    const wantMood = !!dict.sentiment;
+    const wantSem = !!dict.semantics;
+    if (!wantMood && !wantSem)
+      return;
+    for (const arr of [this.all, this.consAll, this.assonAll, this.allitAll]) {
+      for (const e of arr) {
+        if (wantMood && !this.moodMap.has(e.word))
+          this.moodMap.set(e.word, dict.sentimentOf(e.word));
+        if (wantSem && !this.semMap.has(e.word))
+          this.semMap.set(e.word, dict.semanticsOf(e.word));
+      }
+    }
+  }
+  /** Подпись значения фильтра категорий: сборные группы своих подписей в SEM_LABEL не имеют. */
+  semFilterLabel(code) {
+    if (code === SEM_CONCRETE_ALL)
+      return t("semConcreteAll");
+    if (code === SEM_ABSTRACT_ALL)
+      return t("semAbstractAll");
+    return SEM_LABEL()[code] || "";
+  }
+  /** Выбор в меню помет. Как и остальные фильтры — липкий, с перемоткой списка в начало. */
+  setTrait(which, value) {
+    if (which === "mood")
+      this.moodFilter = value;
+    else
+      this.semFilter = value;
+    this.shown = PAGE;
+    this.saveFilters();
+    this.renderSoundResults();
+  }
+  /** Категория кандидата с учётом сборных групп «конкретное»/«абстрактное». */
+  semMatches(word, want) {
+    const code = this.semMap.get(word);
+    if (!code)
+      return false;
+    if (want === SEM_CONCRETE_ALL)
+      return !SEM_ABSTRACT.includes(code);
+    if (want === SEM_ABSTRACT_ALL)
+      return SEM_ABSTRACT.includes(code);
+    return code === want;
   }
   /** Текущая вкладка опустела на новом слове/ударении — уйти на первую непустую. */
   ensureValidTab() {
@@ -6849,6 +7054,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     if (this.posFilter && e.p !== this.posFilter)
       return false;
+    if (this.moodOn && this.moodMap.get(e.word) !== this.moodOn)
+      return false;
+    if (this.semOn && !this.semMatches(e.word, this.semOn))
+      return false;
     return true;
   }
   filtered() {
@@ -6875,6 +7084,22 @@ var RhymesView = class extends import_obsidian3.ItemView {
     return list.some((e) => clausula(e) !== first);
   }
   /**
+   * Сколько кандидатов текущего списка попадает в каждое значение пометы. По этому и строится
+   * меню: предлагать «светлые», когда светлых в списке нет, — способ показать пустую выдачу.
+   * Неразмеченные слова не считаются нигде: КартаСлов покрывает около 40% списка рифм по
+   * тональности и 30% по категориям, и это честнее показать числом рядом с пунктом.
+   */
+  traitCounts(map, keys) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const e of this.soundList()) {
+      const code = map.get(e.word);
+      if (!code || !keys.includes(code))
+        continue;
+      counts.set(code, (counts.get(code) || 0) + 1);
+    }
+    return counts;
+  }
+  /**
    * Фильтры выдачи липкие: пишешь строку в размер — «2 слога» и часть речи держатся
    * при переходе к следующему слову и при слежении за курсором. Сбрасывает их только
    * кнопка в ряду фильтров и очистка поиска.
@@ -6884,6 +7109,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.clausFilter = 0;
     this.clausOn = 0;
     this.posFilter = "";
+    this.moodFilter = "";
+    this.moodOn = "";
+    this.semFilter = "";
+    this.semOn = "";
     this.semanticOnly = false;
     this.soundKindPref = "all";
     this.soundKind = "all";
@@ -6899,6 +7128,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const isKind = (v) => KIND_KEYS.includes(v);
     this.soundKindPref = isKind(s.filterKind) ? s.filterKind : "all";
     this.soundKind = this.soundKindPref;
+    this.moodFilter = MOOD_FILTER_KEYS.includes(s.filterMood) ? s.filterMood : "";
+    this.semFilter = SEM_FILTER_KEYS.includes(s.filterSem) ? s.filterSem : "";
     this.semanticOnly = s.filterSemantic === true;
   }
   /** Запомнить фильтры — как и слои лексики, пишем на каждый клик по фильтру. */
@@ -6908,12 +7139,14 @@ var RhymesView = class extends import_obsidian3.ItemView {
     s.filterClaus = this.clausFilter;
     s.filterPos = this.posFilter;
     s.filterKind = this.soundKindPref;
+    s.filterMood = this.moodFilter;
+    s.filterSem = this.semFilter;
     s.filterSemantic = this.semanticOnly;
     void this.plugin.saveSettings();
   }
   /** Есть ли что сбрасывать (слой лексики — глобальная настройка, её не трогаем). */
   filtersActive() {
-    return this.sylFilter !== 0 || this.clausFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
+    return this.sylFilter !== 0 || this.clausFilter !== 0 || this.posFilter !== "" || this.moodFilter !== "" || this.semFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
   }
   /** Пусто: если виноваты фильтры — предложить сброс прямо в сообщении. */
   renderEmpty(host) {
@@ -6958,6 +7191,65 @@ var RhymesView = class extends import_obsidian3.ItemView {
       renderShardList(listEl, inv, false);
     });
   }
+  /**
+   * Строка копилки — свёрнутый блок под разделами, как список файлов словаря. Пустая копилка
+   * не рисуется вовсе: она наполняется сама, и до первого взятого слова её быть не должно.
+   */
+  renderStashRow() {
+    const host = this.stashHost;
+    if (!host)
+      return;
+    host.empty();
+    if (this.stash.length === 0)
+      return;
+    const box = host.createEl("details", { cls: "rr-stash-box" });
+    box.open = this.stashOpen;
+    box.addEventListener("toggle", () => {
+      this.stashOpen = box.open;
+    });
+    box.createEl("summary", { cls: "rr-stash-sum", text: `${t("stashTitle")}: ${this.stash.length}` });
+    const listEl = box.createDiv({ cls: "rr-stash" });
+    for (const w of this.stash) {
+      const chip = listEl.createSpan({ cls: "rr-chip rr-stash-chip", text: w });
+      chip.title = t("stashRemoveHint");
+      chip.addEventListener("click", () => this.stashRemove(w));
+    }
+    const row = box.createDiv({ cls: "rr-stash-actions" });
+    const ins = row.createEl("button", { cls: "rr-fbtn", text: t("stashInsert") });
+    ins.addEventListener("click", () => this.insertList(this.stashText()));
+    const copy = row.createEl("button", { cls: "rr-fbtn", text: t("stashCopy") });
+    copy.addEventListener("click", () => {
+      void this.writeClipboard(this.stashText()).then((ok) => {
+        new import_obsidian3.Notice(ok ? t("stashCopied") + this.stash.length : t("copyFail"));
+      });
+    });
+    const clr = row.createEl("button", { cls: "rr-fclear", text: t("stashClear") });
+    clr.addEventListener("click", () => this.stashClear());
+  }
+  /**
+   * Вписать в заметку многострочный текст (копилку, список рифм). Отдельно от insertWord:
+   * тот подменяет слово под курсором — за этим его и зовут из чипа, — а списку надо встать
+   * на место курсора и ничего не съесть. С новой строки, если в текущей уже что-то есть.
+   */
+  insertList(text) {
+    if (!text)
+      return;
+    const editor = this.plugin.getEditor();
+    if (!editor) {
+      new import_obsidian3.Notice(t("noEditor"));
+      return;
+    }
+    const at = editor.getCursor("to");
+    const line = editor.getLine(at.line);
+    const end = { line: at.line, ch: line.length };
+    const out = (line.trim() ? "\n" : "") + text + "\n";
+    editor.replaceRange(out, end, end);
+    const lines = out.split("\n");
+    editor.setCursor({ line: at.line + lines.length - 1, ch: lines[lines.length - 1].length });
+    if (!import_obsidian3.Platform.isMobile)
+      editor.focus();
+    new import_obsidian3.Notice(t("stashInserted") + text.split("\n").length);
+  }
   /** Скачивание словаря по кнопке с экрана «нет словаря». */
   async downloadFromPanel(btn, prog) {
     btn.disabled = true;
@@ -6975,10 +7267,46 @@ var RhymesView = class extends import_obsidian3.ItemView {
       prog.setText(t("dlFailed"));
     }
   }
+  /**
+   * Копилка — слова, которые вы за сессию скопировали или вставили в заметку. Отдельного
+   * жеста «отложить» нет намеренно: свободных жестов у чипа не осталось (клик — копия,
+   * двойной — провал в рифмы, Alt/долгое нажатие — вставка), а на телефоне их и подавно.
+   * Клик по слову и так означает «это я беру» — копилка просто помнит, что вы брали.
+   * Живёт до перезапуска: это черновик под одну песню, а не данные, которым место в data.json
+   * и в синхронизации.
+   */
+  stashAdd(w) {
+    const word = stripStress(w);
+    if (!word)
+      return;
+    const at = this.stash.indexOf(word);
+    if (at >= 0)
+      this.stash.splice(at, 1);
+    this.stash.unshift(word);
+    if (this.stash.length > STASH_MAX)
+      this.stash.length = STASH_MAX;
+    this.renderStashRow();
+  }
+  stashRemove(w) {
+    const at = this.stash.indexOf(w);
+    if (at >= 0)
+      this.stash.splice(at, 1);
+    this.renderStashRow();
+  }
+  stashClear() {
+    this.stash = [];
+    this.renderStashRow();
+  }
+  /** Копилка списком: по слову в строке — так её и кладут в заметку. */
+  stashText() {
+    return this.stash.join("\n");
+  }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
   copyWord(w) {
     void this.writeClipboard(w).then((ok) => {
       new import_obsidian3.Notice(ok ? t("copied") + w : t("copyFail"));
+      if (ok)
+        this.stashAdd(w);
     });
   }
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
@@ -7029,6 +7357,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (!import_obsidian3.Platform.isMobile)
       editor.focus();
     new import_obsidian3.Notice(t("inserted") + out, 1500);
+    this.stashAdd(text);
   }
   /**
    * Долгое нажатие по слову (телефон, где нет Alt) — вставка в заметку. Возвращает флаг
@@ -7238,9 +7567,12 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.cancelCopyTimers();
     this.bodyEl.empty();
     this.resultsHost = null;
+    this.stashHost = null;
     if (!this.word) {
       if (!this.plugin.genUnlocked) {
         this.bodyEl.createDiv({ cls: "rr-status", text: t("emptyHint") });
+        this.stashHost = this.bodyEl.createDiv();
+        this.renderStashRow();
         return;
       }
       this.renderTabs(/* @__PURE__ */ new Set(["gen"]));
@@ -7252,6 +7584,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     this.renderWordHeader();
     this.renderTabs(new Set(this.availableTabs()));
+    this.stashHost = this.bodyEl.createDiv();
+    this.renderStashRow();
     if (this.plugin.dict.missingShards.length > 0)
       this.renderShardBox(this.bodyEl);
     if (this.tab === "meaning") {
@@ -7291,6 +7625,28 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     const clausVaries = this.clausSpread();
     this.clausOn = clausVaries ? this.clausFilter : 0;
+    const moodCounts = this.traitCounts(this.moodMap, MOOD_KEYS);
+    const semCounts = this.traitCounts(this.semMap, SEM_KEYS);
+    const moodOpts = MOOD_KEYS.filter((k) => moodCounts.has(k)).map((k) => [k, `${MOOD_LABEL()[k]} (${moodCounts.get(k)})`]);
+    let concrete = 0;
+    let abstract = 0;
+    for (const [code, n] of semCounts) {
+      if (SEM_ABSTRACT.includes(code))
+        abstract += n;
+      else
+        concrete += n;
+    }
+    const semOpts = [];
+    if (concrete > 0 && abstract > 0) {
+      semOpts.push([SEM_CONCRETE_ALL, `${t("semConcreteAll")} (${concrete})`]);
+      semOpts.push([SEM_ABSTRACT_ALL, `${t("semAbstractAll")} (${abstract})`]);
+    }
+    for (const k of SEM_KEYS) {
+      if (semCounts.has(k))
+        semOpts.push([k, `${SEM_LABEL()[k]} (${semCounts.get(k)})`]);
+    }
+    this.moodOn = moodOpts.some(([k]) => k === this.moodFilter) ? this.moodFilter : "";
+    this.semOn = semOpts.some(([k]) => k === this.semFilter) ? this.semFilter : "";
     const posLabel = POS_LABEL();
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
@@ -7381,6 +7737,29 @@ var RhymesView = class extends import_obsidian3.ItemView {
         }
       }
     );
+    if (moodOpts.length > 0 || semOpts.length > 0) {
+      const on = [];
+      if (this.moodOn)
+        on.push(MOOD_LABEL()[this.moodOn]);
+      if (this.semOn)
+        on.push(this.semFilterLabel(this.semOn));
+      const traitBtn = this.filterMenu(bar, t("traitLabel"), on.length > 0 ? on.join(", ") : t("filterAll"), on.length > 0, (menu) => {
+        const section = (title, all, opts, which) => {
+          menu.addItem((it) => it.setTitle(title).setIsLabel(true));
+          menu.addItem((it) => it.setTitle(t("filterAll")).setChecked(all === "").onClick(() => this.setTrait(which, "")));
+          for (const [val, label] of opts)
+            menu.addItem((it) => it.setTitle(label).setChecked(all === val).onClick(() => this.setTrait(which, val)));
+        };
+        if (moodOpts.length > 0)
+          section(t("traitMood"), this.moodOn, moodOpts, "mood");
+        if (semOpts.length > 0) {
+          if (moodOpts.length > 0)
+            menu.addSeparator();
+          section(t("traitSem"), this.semOn, semOpts, "sem");
+        }
+      });
+      traitBtn.title = t("traitHint");
+    }
     const lexOpts = [
       [0, t("lexBase")],
       [1, t("lexFreq")],
@@ -7449,7 +7828,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
     const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
-    chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}${related ? " \xB7 " + t("relatedHint") : ""}`;
+    const mood = this.moodMap.get(e.word);
+    const sem = this.semMap.get(e.word);
+    chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}${mood ? " \xB7 " + MOOD_LABEL()[mood] : ""}${sem ? " \xB7 " + SEM_LABEL()[sem] : ""}${related ? " \xB7 " + t("relatedHint") : ""}`;
     this.attachWordActions(chip, e.word);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
@@ -7523,6 +7904,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       const r = btn.getBoundingClientRect();
       menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
     });
+    return btn;
   }
   /** Сворачиваемая таблица словоформ с ударениями — вверху вкладки «Значение». */
   renderForms(host) {
@@ -8002,6 +8384,8 @@ var DEFAULT_SETTINGS = {
   filterClaus: 0,
   filterPos: "",
   filterKind: "all",
+  filterMood: "",
+  filterSem: "",
   filterSemantic: false,
   localDictDir: "\u0421\u043B\u043E\u0432\u0430\u0440\u0438 \u0440\u0438\u0444\u043C",
   hideDictDir: true,
@@ -8057,6 +8441,47 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       name: t("cmdFollow"),
       callback: () => void this.setFollow(!this.settings.followCursor)
     });
+    const withStash = (act) => (checking) => {
+      const v = this.getRhymesView();
+      if (!v || v.stash.length === 0)
+        return false;
+      if (!checking)
+        act(v);
+      return true;
+    };
+    this.addCommand({
+      id: "insert-stash",
+      name: t("cmdStashInsert"),
+      checkCallback: withStash((v) => v.insertList(v.stashText()))
+    });
+    this.addCommand({
+      id: "copy-stash",
+      name: t("cmdStashCopy"),
+      checkCallback: withStash((v) => {
+        void v.writeClipboard(v.stashText()).then((ok) => {
+          new import_obsidian4.Notice(ok ? t("stashCopied") + v.stash.length : t("copyFail"));
+        });
+      })
+    });
+    this.addCommand({
+      id: "clear-stash",
+      name: t("cmdStashClear"),
+      checkCallback: withStash((v) => v.stashClear())
+    });
+    for (const [id, name, dir] of [["next-tab", t("cmdNextTab"), 1], ["prev-tab", t("cmdPrevTab"), -1]]) {
+      this.addCommand({
+        id,
+        name,
+        checkCallback: (checking) => {
+          const v = this.getRhymesView();
+          if (!v || !v.hasWord())
+            return false;
+          if (!checking)
+            v.cycleTab(dir);
+          return true;
+        }
+      });
+    }
     this.registerDomEvent(document, "selectionchange", () => {
       if (this.settings.followCursor)
         this.followSync();
@@ -8553,7 +8978,8 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
           },
           { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
           { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") },
-          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) }
+          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) },
+          { name: t("stressTitle"), desc: t("stressDesc"), render: (setting, group) => this.renderStresses(setting, group) }
         ]
       },
       {
@@ -8725,6 +9151,48 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     setting.addExtraButton((btn) => {
       btn.setIcon("refresh-cw").setTooltip(t("invRefresh"));
       btn.onClick(() => fill());
+    });
+    fill();
+    return () => listEl.remove();
+  }
+  /**
+   * Ручные ударения. Клик по гласной запоминается навсегда и лежит в data.json, где его
+   * никто не видит: ошиблись один раз — и слово с тех пор рифмуется не туда, а отменить
+   * это можно было только повторным кликом по правильной гласной, если вспомнить, где.
+   * Здесь их видно списком, каждое снимается по клику.
+   */
+  renderStresses(setting, group) {
+    const host = group && group.listEl ? group.listEl : setting.settingEl.parentElement;
+    if (!host)
+      return;
+    const listEl = host.createDiv({ cls: "rr-stresses" });
+    const fill = () => {
+      listEl.empty();
+      const words = Object.keys(this.plugin.userStress).sort();
+      if (words.length === 0) {
+        listEl.createDiv({ cls: "rr-shard-note", text: t("stressEmpty") });
+        return;
+      }
+      for (const w of words) {
+        const chip = listEl.createSpan({ cls: "rr-chip rr-stress-chip", text: markStress(w, this.plugin.userStress[w]) });
+        chip.title = t("stressRemoveHint");
+        chip.addEventListener("click", () => {
+          this.plugin.setUserStress(w, null);
+          void this.plugin.saveSettings();
+          this.plugin.refreshPanel();
+          fill();
+        });
+      }
+    };
+    setting.addExtraButton((btn) => {
+      btn.setIcon("rotate-ccw").setTooltip(t("stressReset"));
+      btn.onClick(() => {
+        for (const w of Object.keys(this.plugin.userStress))
+          this.plugin.setUserStress(w, null);
+        void this.plugin.saveSettings();
+        this.plugin.refreshPanel();
+        fill();
+      });
     });
     fill();
     return () => listEl.remove();

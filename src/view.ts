@@ -73,6 +73,8 @@ function shardTitle(name: string) {
     anagrams: t("shardAnagrams"),
     lemmas: t("shardLemmas"),
     phrases: t("shardPhrases"),
+    sentiment: t("shardSentiment"),
+    semantics: t("shardSemantics"),
     yo: t("shardYo"),
     generator: t("shardGenerator")
   };
@@ -116,14 +118,47 @@ const CLAUS_LABEL = (): Record<number, string> => ({
   3: t("clausD"),
   4: t("clausH")
 });
+// тональность слова (КартаСлов): порядок задаёт и порядок пунктов меню
+const MOOD_KEYS = ["p", "n", "u"];
+const MOOD_LABEL = (): Record<string, string> => ({
+  p: t("moodLight"),
+  n: t("moodDark"),
+  u: t("moodPlain")
+});
+// смысловые категории (КартаСлов, облегчённая разметка): x и d — абстрактное, остальное конкретное.
+// Порядок — от крупных к мелким, меню строится по нему
+const SEM_KEYS = ["h", "t", "p", "a", "r", "f", "s", "v", "b", "c", "x", "d"];
+const SEM_ABSTRACT = ["x", "d"];
+const SEM_LABEL = (): Record<string, string> => ({
+  h: t("semHuman"),
+  t: t("semThing"),
+  p: t("semPlace"),
+  a: t("semAnimal"),
+  r: t("semPlant"),
+  f: t("semFood"),
+  s: t("semSubstance"),
+  v: t("semTransport"),
+  b: t("semAnatomy"),
+  c: t("semConstruction"),
+  x: t("semAbstract"),
+  d: t("semAction")
+});
+// две сборные группы поверх категорий: ради них слой и брали
+const SEM_CONCRETE_ALL = "+";
+const SEM_ABSTRACT_ALL = "-";
 const PAGE = 50;
 const PAGE_MORE = 200;
 // допустимые значения запоминаемых фильтров — data.json правят и руками
 const POS_KEYS = ["", "n", "v", "a", "d", "i"];
 const KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
+const MOOD_FILTER_KEYS = ["", ...MOOD_KEYS];
+const SEM_FILTER_KEYS = ["", SEM_CONCRETE_ALL, SEM_ABSTRACT_ALL, ...SEM_KEYS];
 // что грузить при старте: ничего / первую волну / обе. Толкования и формы — 360 МБ
 // из ~500 МБ всего словаря, поэтому выбор заметно меняет цену запуска
 const STARTUP_KEYS = ["none", "rhymes", "full"];
+// копилка: сколько последних взятых слов помним. Больше в черновик одной песни и не нужно,
+// а список, который не влезает на экран, перестаёт читаться
+const STASH_MAX = 60;
 // вставка слова в заметку: Alt+клик на десктопе, долгое нажатие на телефоне
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP = 10;
@@ -160,6 +195,18 @@ const RhymesView = class extends ItemView {
   clausFilter: number; // 0 = все, 1 мужская, 2 женская, 3 дактилическая, 4 гипердактилическая
   clausOn: number; // он же, но действующий: 0 там, где клаузула у всех одна (см. renderSoundResults)
   posFilter: string; // '' = все
+  moodFilter: string; // '' = все, иначе код из MOOD_KEYS
+  moodOn: string; // он же действующий: '' там, где капсулы нет (см. renderSoundResults)
+  semFilter: string; // '' = все, '+' конкретное, '-' абстрактное, иначе код из SEM_KEYS
+  semOn: string; // он же действующий
+  // пометы кандидатов текущего слова: считаются один раз в loadRhymes, а не на каждый фильтр
+  moodMap: Map<string, string>;
+  semMap: Map<string, string>;
+  // копилка: что вы за сессию скопировали или вставили. Не настройка и не данные —
+  // черновик, поэтому живёт на панели, а не в data.json
+  stash: string[];
+  stashOpen: boolean;
+  stashHost: HTMLElement | null;
   semanticOnly: boolean;
   shown: number;
   sectionOpen: Partial<Record<SoundKind, boolean>>;
@@ -220,6 +267,17 @@ const RhymesView = class extends ItemView {
     this.clausOn = 0;
     this.posFilter = "";
     // '' = все
+    // тональность и смысловая категория кандидата (КартаСлов): в отличие от клаузулы это
+    // свойство самого кандидата, поэтому фильтр здесь и осмыслен
+    this.moodFilter = "";
+    this.moodOn = "";
+    this.semFilter = "";
+    this.semOn = "";
+    this.moodMap = /* @__PURE__ */ new Map();
+    this.semMap = /* @__PURE__ */ new Map();
+    this.stash = [];
+    this.stashOpen = false;
+    this.stashHost = null;
     // рифмы, близкие по смыслу: множество семантически связанных слов текущего слова
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
@@ -437,15 +495,68 @@ const RhymesView = class extends ItemView {
     this.sectionShown = {};
     this.allitAll = this.plugin.dict.alliterationsFor(this.word);
     if (this.stress === null) {
+      // без ударения рифм не собрать, но аллитерации собраны — пометы им всё равно нужны
       this.all = [];
       this.consAll = [];
       this.assonAll = [];
-      return;
+    } else {
+      this.all = this.plugin.dict.rhymesFor(this.word, this.stress);
+      const scan = this.plugin.dict.assonancesFor(this.word, this.stress);
+      this.consAll = scan.conson;
+      this.assonAll = scan.asson;
     }
-    this.all = this.plugin.dict.rhymesFor(this.word, this.stress);
-    const scan = this.plugin.dict.assonancesFor(this.word, this.stress);
-    this.consAll = scan.conson;
-    this.assonAll = scan.asson;
+    this.loadTraits();
+  }
+  /**
+   * Пометы всех кандидатов сразу. Считаем здесь, а не в passesFilter: фильтр вызывается на
+   * каждую перерисовку и на каждое слово списка, а поиск пометы — двоичный поиск плюс, при
+   * промахе, обращение к леммам. Списка нет — карты пустые, и капсулы не появятся.
+   */
+  loadTraits() {
+    this.moodMap = /* @__PURE__ */ new Map();
+    this.semMap = /* @__PURE__ */ new Map();
+    const dict = this.plugin.dict;
+    const wantMood = !!dict.sentiment;
+    const wantSem = !!dict.semantics;
+    if (!wantMood && !wantSem)
+      return;
+    for (const arr of [this.all, this.consAll, this.assonAll, this.allitAll]) {
+      for (const e of arr) {
+        if (wantMood && !this.moodMap.has(e.word))
+          this.moodMap.set(e.word, dict.sentimentOf(e.word));
+        if (wantSem && !this.semMap.has(e.word))
+          this.semMap.set(e.word, dict.semanticsOf(e.word));
+      }
+    }
+  }
+  /** Подпись значения фильтра категорий: сборные группы своих подписей в SEM_LABEL не имеют. */
+  semFilterLabel(code: string) {
+    if (code === SEM_CONCRETE_ALL)
+      return t("semConcreteAll");
+    if (code === SEM_ABSTRACT_ALL)
+      return t("semAbstractAll");
+    return SEM_LABEL()[code] || "";
+  }
+  /** Выбор в меню помет. Как и остальные фильтры — липкий, с перемоткой списка в начало. */
+  setTrait(which: "mood" | "sem", value: string) {
+    if (which === "mood")
+      this.moodFilter = value;
+    else
+      this.semFilter = value;
+    this.shown = PAGE;
+    this.saveFilters();
+    this.renderSoundResults();
+  }
+  /** Категория кандидата с учётом сборных групп «конкретное»/«абстрактное». */
+  semMatches(word: string, want: string) {
+    const code = this.semMap.get(word);
+    if (!code)
+      return false;
+    if (want === SEM_CONCRETE_ALL)
+      return !SEM_ABSTRACT.includes(code);
+    if (want === SEM_ABSTRACT_ALL)
+      return SEM_ABSTRACT.includes(code);
+    return code === want;
   }
   /** Текущая вкладка опустела на новом слове/ударении — уйти на первую непустую. */
   ensureValidTab() {
@@ -626,6 +737,10 @@ const RhymesView = class extends ItemView {
     }
     if (this.posFilter && e.p !== this.posFilter)
       return false;
+    if (this.moodOn && this.moodMap.get(e.word) !== this.moodOn)
+      return false;
+    if (this.semOn && !this.semMatches(e.word, this.semOn))
+      return false;
     return true;
   }
   filtered() {
@@ -652,6 +767,22 @@ const RhymesView = class extends ItemView {
     return list.some((e) => clausula(e) !== first);
   }
   /**
+   * Сколько кандидатов текущего списка попадает в каждое значение пометы. По этому и строится
+   * меню: предлагать «светлые», когда светлых в списке нет, — способ показать пустую выдачу.
+   * Неразмеченные слова не считаются нигде: КартаСлов покрывает около 40% списка рифм по
+   * тональности и 30% по категориям, и это честнее показать числом рядом с пунктом.
+   */
+  traitCounts(map: Map<string, string>, keys: string[]) {
+    const counts = /* @__PURE__ */ new Map<string, number>();
+    for (const e of this.soundList()) {
+      const code = map.get(e.word);
+      if (!code || !keys.includes(code))
+        continue;
+      counts.set(code, (counts.get(code) || 0) + 1);
+    }
+    return counts;
+  }
+  /**
    * Фильтры выдачи липкие: пишешь строку в размер — «2 слога» и часть речи держатся
    * при переходе к следующему слову и при слежении за курсором. Сбрасывает их только
    * кнопка в ряду фильтров и очистка поиска.
@@ -661,6 +792,10 @@ const RhymesView = class extends ItemView {
     this.clausFilter = 0;
     this.clausOn = 0;
     this.posFilter = "";
+    this.moodFilter = "";
+    this.moodOn = "";
+    this.semFilter = "";
+    this.semOn = "";
     this.semanticOnly = false;
     this.soundKindPref = "all";
     this.soundKind = "all";
@@ -677,6 +812,8 @@ const RhymesView = class extends ItemView {
     const isKind = (v: string): v is SoundKind => KIND_KEYS.includes(v);
     this.soundKindPref = isKind(s.filterKind) ? s.filterKind : "all";
     this.soundKind = this.soundKindPref;
+    this.moodFilter = MOOD_FILTER_KEYS.includes(s.filterMood) ? s.filterMood : "";
+    this.semFilter = SEM_FILTER_KEYS.includes(s.filterSem) ? s.filterSem : "";
     this.semanticOnly = s.filterSemantic === true;
   }
   /** Запомнить фильтры — как и слои лексики, пишем на каждый клик по фильтру. */
@@ -686,12 +823,15 @@ const RhymesView = class extends ItemView {
     s.filterClaus = this.clausFilter;
     s.filterPos = this.posFilter;
     s.filterKind = this.soundKindPref;
+    s.filterMood = this.moodFilter;
+    s.filterSem = this.semFilter;
     s.filterSemantic = this.semanticOnly;
     void this.plugin.saveSettings();
   }
   /** Есть ли что сбрасывать (слой лексики — глобальная настройка, её не трогаем). */
   filtersActive() {
-    return this.sylFilter !== 0 || this.clausFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
+    return this.sylFilter !== 0 || this.clausFilter !== 0 || this.posFilter !== "" ||
+      this.moodFilter !== "" || this.semFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
   }
   /** Пусто: если виноваты фильтры — предложить сброс прямо в сообщении. */
   renderEmpty(host: HTMLElement) {
@@ -738,6 +878,68 @@ const RhymesView = class extends ItemView {
       renderShardList(listEl, inv, false);
     });
   }
+  /**
+   * Строка копилки — свёрнутый блок под разделами, как список файлов словаря. Пустая копилка
+   * не рисуется вовсе: она наполняется сама, и до первого взятого слова её быть не должно.
+   */
+  renderStashRow() {
+    const host = this.stashHost;
+    if (!host)
+      return;
+    host.empty();
+    if (this.stash.length === 0)
+      return;
+    const box = host.createEl("details", { cls: "rr-stash-box" });
+    box.open = this.stashOpen;
+    box.addEventListener("toggle", () => {
+      this.stashOpen = box.open;
+    });
+    box.createEl("summary", { cls: "rr-stash-sum", text: `${t("stashTitle")}: ${this.stash.length}` });
+    const listEl = box.createDiv({ cls: "rr-stash" });
+    for (const w of this.stash) {
+      const chip = listEl.createSpan({ cls: "rr-chip rr-stash-chip", text: w });
+      chip.title = t("stashRemoveHint");
+      // клик убирает: копилка набирается кликами, и разбирается пусть так же
+      chip.addEventListener("click", () => this.stashRemove(w));
+    }
+    const row = box.createDiv({ cls: "rr-stash-actions" });
+    const ins = row.createEl("button", { cls: "rr-fbtn", text: t("stashInsert") });
+    ins.addEventListener("click", () => this.insertList(this.stashText()));
+    const copy = row.createEl("button", { cls: "rr-fbtn", text: t("stashCopy") });
+    copy.addEventListener("click", () => {
+      void this.writeClipboard(this.stashText()).then((ok) => {
+        new Notice(ok ? t("stashCopied") + this.stash.length : t("copyFail"));
+      });
+    });
+    const clr = row.createEl("button", { cls: "rr-fclear", text: t("stashClear") });
+    clr.addEventListener("click", () => this.stashClear());
+  }
+  /**
+   * Вписать в заметку многострочный текст (копилку, список рифм). Отдельно от insertWord:
+   * тот подменяет слово под курсором — за этим его и зовут из чипа, — а списку надо встать
+   * на место курсора и ничего не съесть. С новой строки, если в текущей уже что-то есть.
+   */
+  insertList(text: string) {
+    if (!text)
+      return;
+    const editor = this.plugin.getEditor();
+    if (!editor) {
+      new Notice(t("noEditor"));
+      return;
+    }
+    // не в позицию курсора, а в конец его строки: курсор может стоять посреди слова,
+    // и вставка на месте разрезала бы его пополам
+    const at = editor.getCursor("to");
+    const line = editor.getLine(at.line);
+    const end = { line: at.line, ch: line.length };
+    const out = (line.trim() ? "\n" : "") + text + "\n";
+    editor.replaceRange(out, end, end);
+    const lines = out.split("\n");
+    editor.setCursor({ line: at.line + lines.length - 1, ch: lines[lines.length - 1].length });
+    if (!Platform.isMobile)
+      editor.focus();
+    new Notice(t("stashInserted") + text.split("\n").length);
+  }
   /** Скачивание словаря по кнопке с экрана «нет словаря». */
   async downloadFromPanel(btn: HTMLButtonElement, prog: HTMLElement) {
     btn.disabled = true;
@@ -756,10 +958,47 @@ const RhymesView = class extends ItemView {
       prog.setText(t("dlFailed"));
     }
   }
+  /**
+   * Копилка — слова, которые вы за сессию скопировали или вставили в заметку. Отдельного
+   * жеста «отложить» нет намеренно: свободных жестов у чипа не осталось (клик — копия,
+   * двойной — провал в рифмы, Alt/долгое нажатие — вставка), а на телефоне их и подавно.
+   * Клик по слову и так означает «это я беру» — копилка просто помнит, что вы брали.
+   * Живёт до перезапуска: это черновик под одну песню, а не данные, которым место в data.json
+   * и в синхронизации.
+   */
+  stashAdd(w: string) {
+    const word = stripStress(w);
+    if (!word)
+      return;
+    // повтор поднимаем наверх, а не заводим второй: список читается как «что я набрал»
+    const at = this.stash.indexOf(word);
+    if (at >= 0)
+      this.stash.splice(at, 1);
+    this.stash.unshift(word);
+    if (this.stash.length > STASH_MAX)
+      this.stash.length = STASH_MAX;
+    this.renderStashRow();
+  }
+  stashRemove(w: string) {
+    const at = this.stash.indexOf(w);
+    if (at >= 0)
+      this.stash.splice(at, 1);
+    this.renderStashRow();
+  }
+  stashClear() {
+    this.stash = [];
+    this.renderStashRow();
+  }
+  /** Копилка списком: по слову в строке — так её и кладут в заметку. */
+  stashText() {
+    return this.stash.join("\n");
+  }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
   copyWord(w: string) {
     void this.writeClipboard(w).then((ok) => {
       new Notice(ok ? t("copied") + w : t("copyFail"));
+      if (ok)
+        this.stashAdd(w);
     });
   }
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
@@ -810,6 +1049,7 @@ const RhymesView = class extends ItemView {
     if (!Platform.isMobile)
       editor.focus();
     new Notice(t("inserted") + out, 1500);
+    this.stashAdd(text);
   }
   /**
    * Долгое нажатие по слову (телефон, где нет Alt) — вставка в заметку. Возвращает флаг
@@ -1028,9 +1268,14 @@ const RhymesView = class extends ItemView {
     this.cancelCopyTimers();
     this.bodyEl.empty();
     this.resultsHost = null;
+    this.stashHost = null;
     if (!this.word) {
       if (!this.plugin.genUnlocked) {
         this.bodyEl.createDiv({ cls: "rr-status", text: t("emptyHint") });
+        // копилку очистка поиска не трогает: набранное за сессию не должно пропадать
+        // от того, что вы стёрли слово в поле
+        this.stashHost = this.bodyEl.createDiv();
+        this.renderStashRow();
         return;
       }
       this.renderTabs(/* @__PURE__ */ new Set<TabId>(["gen"]));
@@ -1042,6 +1287,9 @@ const RhymesView = class extends ItemView {
     }
     this.renderWordHeader();
     this.renderTabs(new Set(this.availableTabs()));
+    // копилка — над содержимым раздела, а не внутри: слова берут и из «Ассоциаций» тоже
+    this.stashHost = this.bodyEl.createDiv();
+    this.renderStashRow();
     // чего-то из словаря нет на диске — говорим об этом прямо под разделами, свёрнутой
     // строкой: приглушённая вкладка сама по себе причину не объясняет. Всё на месте —
     // строки нет вовсе, чтобы не мозолить глаза
@@ -1088,6 +1336,36 @@ const RhymesView = class extends ItemView {
     // фильтр включается сам, а не молча режет выдачу там, где режет либо всё, либо ничего
     const clausVaries = this.clausSpread();
     this.clausOn = clausVaries ? this.clausFilter : 0;
+    // а вот тональность и смысловая категория — свойства именно кандидата, поэтому здесь
+    // фильтр и осмыслен. Пометы КартаСлов покрывают список не целиком (около 40% и 30%),
+    // так что предлагаем только те значения, которые в списке реально есть, и с числом:
+    // видно заранее, сколько слов останется. Липкий выбор, которого в списке нет, не
+    // действует — иначе выдача была бы пуста, а причина не видна
+    const moodCounts = this.traitCounts(this.moodMap, MOOD_KEYS);
+    const semCounts = this.traitCounts(this.semMap, SEM_KEYS);
+    const moodOpts: [string, string][] = MOOD_KEYS.filter((k) => moodCounts.has(k))
+      .map((k) => [k, `${MOOD_LABEL()[k]} (${moodCounts.get(k)})`]);
+    let concrete = 0;
+    let abstract = 0;
+    for (const [code, n] of semCounts) {
+      if (SEM_ABSTRACT.includes(code))
+        abstract += n;
+      else
+        concrete += n;
+    }
+    const semOpts: [string, string][] = [];
+    // сборные «конкретное»/«абстрактное» — ради них слой и брали; предлагаем, только когда
+    // в списке есть и то и другое, иначе это тот же «все» под другим именем
+    if (concrete > 0 && abstract > 0) {
+      semOpts.push([SEM_CONCRETE_ALL, `${t("semConcreteAll")} (${concrete})`]);
+      semOpts.push([SEM_ABSTRACT_ALL, `${t("semAbstractAll")} (${abstract})`]);
+    }
+    for (const k of SEM_KEYS) {
+      if (semCounts.has(k))
+        semOpts.push([k, `${SEM_LABEL()[k]} (${semCounts.get(k)})`]);
+    }
+    this.moodOn = moodOpts.some(([k]) => k === this.moodFilter) ? this.moodFilter : "";
+    this.semOn = semOpts.some(([k]) => k === this.semFilter) ? this.semFilter : "";
     const posLabel = POS_LABEL();
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
@@ -1179,6 +1457,31 @@ const RhymesView = class extends ItemView {
         }
       }
     );
+    // одна капсула на обе пометы: по отдельности они дали бы ряду фильтров ещё две строки
+    // на телефоне, а вопрос у них общий — «что это за слово»
+    if (moodOpts.length > 0 || semOpts.length > 0) {
+      const on: string[] = [];
+      if (this.moodOn)
+        on.push(MOOD_LABEL()[this.moodOn]);
+      if (this.semOn)
+        on.push(this.semFilterLabel(this.semOn));
+      const traitBtn = this.filterMenu(bar, t("traitLabel"), on.length > 0 ? on.join(", ") : t("filterAll"), on.length > 0, (menu) => {
+        const section = (title: string, all: string, opts: [string, string][], which: "mood" | "sem") => {
+          menu.addItem((it) => it.setTitle(title).setIsLabel(true));
+          menu.addItem((it) => it.setTitle(t("filterAll")).setChecked(all === "").onClick(() => this.setTrait(which, "")));
+          for (const [val, label] of opts)
+            menu.addItem((it) => it.setTitle(label).setChecked(all === val).onClick(() => this.setTrait(which, val)));
+        };
+        if (moodOpts.length > 0)
+          section(t("traitMood"), this.moodOn, moodOpts, "mood");
+        if (semOpts.length > 0) {
+          if (moodOpts.length > 0)
+            menu.addSeparator();
+          section(t("traitSem"), this.semOn, semOpts, "sem");
+        }
+      });
+      traitBtn.title = t("traitHint");
+    }
     const lexOpts: [number, string][] = [
       [0, t("lexBase")],
       [1, t("lexFreq")],
@@ -1247,7 +1550,13 @@ const RhymesView = class extends ItemView {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
     const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
-    chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}${related ? " \xB7 " + t("relatedHint") : ""}`;
+    // пометы показываем только подсказкой: цветом их не покажешь — четыре слоя лексики уже
+    // заняли и фон, и насыщенность чипа
+    const mood = this.moodMap.get(e.word);
+    const sem = this.semMap.get(e.word);
+    chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}` +
+      `${mood ? " \xB7 " + MOOD_LABEL()[mood] : ""}${sem ? " \xB7 " + SEM_LABEL()[sem] : ""}` +
+      `${related ? " \xB7 " + t("relatedHint") : ""}`;
     this.attachWordActions(chip, e.word);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
@@ -1321,6 +1630,7 @@ const RhymesView = class extends ItemView {
       const r = btn.getBoundingClientRect();
       menu.showAtPosition({ x: r.left, y: r.bottom + 4 });
     });
+    return btn;
   }
   /** Сворачиваемая таблица словоформ с ударениями — вверху вкладки «Значение». */
   renderForms(host: HTMLElement) {

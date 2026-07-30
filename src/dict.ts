@@ -228,6 +228,8 @@ const RhymeDict = class {
   defs: TextIndex | null;
   lemmas: TextIndex | null;
   phrasesIdx: TextIndex | null;
+  sentiment: TextIndex | null;
+  semantics: TextIndex | null;
   gen: GenPools | null;
   chars: string[];
   yoMap: Map<string, string>;
@@ -276,6 +278,10 @@ const RhymeDict = class {
     this.chars = [...new Set(CHARACTERS)];
     this.lemmas = null;
     this.phrasesIdx = null;
+    // пометы КартаСлов: тональность (светлое/тёмное/нейтральное) и смысловая категория.
+    // Оба шарда — «слово\tодин код», оба необязательные: без них просто нет двух фильтров
+    this.sentiment = null;
+    this.semantics = null;
     // ёфикация ввода: е-написание -> однозначная ё-версия (карта из build-yomap, безопасные пары)
     this.yoMap = /* @__PURE__ */ new Map();
     // личные толковые словари пользователя (DSL): каждый — свой файл local-<id>.txt.gz.
@@ -506,6 +512,8 @@ const RhymeDict = class {
       { name: "anagrams", variants: [["anagrams.txt.gz"]], load: (raw) => this.anagrams = buildIndex(raw) },
       { name: "lemmas", variants: [["lemmas.txt.gz"]], load: (raw) => this.lemmas = buildIndex(raw) },
       { name: "phrases", variants: [["phrases.txt.gz"]], load: (raw) => this.phrasesIdx = buildIndex(raw) },
+      { name: "sentiment", variants: [["sentiment.txt.gz"]], load: (raw) => this.sentiment = buildIndex(raw) },
+      { name: "semantics", variants: [["semantics.txt.gz"]], load: (raw) => this.semantics = buildIndex(raw) },
       { name: "yo", variants: [["yo.txt.gz"]], load: (raw) => this.parseYo(raw) },
       { name: "generator", variants: [["generator.txt.gz"]], load: (raw) => this.gen = this.parseGenerator(raw) }
     ];
@@ -1000,6 +1008,37 @@ const RhymeDict = class {
       return [];
     const line = findLine(this.lemmas, word + "	");
     return line ? line.slice(word.length + 1).split(",") : [];
+  }
+  /**
+   * Помета из шарда вида «слово\tодин код»: сначала по самому слову, потом по лемме.
+   * Лемма тут решает всё: КартаСлов размечает начальную форму, а в выдаче стоят словоформы —
+   * без обращения к лемме размечено 8% списка рифм, с ней 40%. Своя помета важнее лемминой
+   * («пирога» — лодка, хотя лемма «пирог» — еда).
+   */
+  traitOf(idx: TextIndex | null, word: string): string {
+    if (!idx)
+      return "";
+    const at = (w: string) => {
+      const line = findLine(idx, w + "	");
+      return line ? line.slice(w.length + 1) : "";
+    };
+    const own = at(word);
+    if (own)
+      return own;
+    for (const lm of this.lemmasOf(word).slice(0, 2)) {
+      const viaLemma = at(lm);
+      if (viaLemma)
+        return viaLemma;
+    }
+    return "";
+  }
+  /** Тональность слова: p светлое, n тёмное, u нейтральное, "" — не размечено. */
+  sentimentOf(word: string) {
+    return this.traitOf(this.sentiment, word);
+  }
+  /** Смысловая категория слова: код из SEM_KEYS, "" — не размечено. */
+  semanticsOf(word: string) {
+    return this.traitOf(this.semantics, word);
   }
   /** Простой формат личных DSL-словарей: "POS:толк1;толк2|POS:…" (без примеров/этимологии). */
   parseLocalGroups(rec: string): DefGroup[] {
