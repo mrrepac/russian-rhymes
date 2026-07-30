@@ -6754,7 +6754,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     let press = null, px = 0, py = 0;
     const cancelPress = () => {
       if (press !== null) {
-        activeWindow.clearTimeout(press);
+        this.containerEl.win.clearTimeout(press);
         this.copyTimers.delete(press);
         press = null;
       }
@@ -6767,7 +6767,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
         py = tp.clientY;
         state.fired = false;
         cancelPress();
-        press = activeWindow.setTimeout(() => {
+        press = this.containerEl.win.setTimeout(() => {
           if (press !== null)
             this.copyTimers.delete(press);
           press = null;
@@ -6814,7 +6814,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     let timer = null;
     const cancel = () => {
       if (timer !== null) {
-        activeWindow.clearTimeout(timer);
+        this.containerEl.win.clearTimeout(timer);
         this.copyTimers.delete(timer);
         timer = null;
       }
@@ -6832,7 +6832,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       }
       if (timer !== null)
         return;
-      timer = activeWindow.setTimeout(() => {
+      timer = this.containerEl.win.setTimeout(() => {
         if (timer !== null)
           this.copyTimers.delete(timer);
         timer = null;
@@ -6848,7 +6848,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   /** Погасить отложенные таймеры копирования (при закрытии панели или перерисовке). */
   cancelCopyTimers() {
     for (const id of this.copyTimers)
-      activeWindow.clearTimeout(id);
+      this.containerEl.win.clearTimeout(id);
     this.copyTimers.clear();
   }
   async onClose() {
