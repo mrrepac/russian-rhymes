@@ -11,6 +11,9 @@
     // включено отдельно от strict: именно неявные any кормят правила no-unsafe-* у
     // линтера каталога. strictNullChecks — отдельная большая работа, пока не он
     "noImplicitAny": true,
+    // тоже отдельно от strict: без него Function.bind возвращает any, и линтер
+    // каталога справедливо ругается на всё, что из него вытекает (см. dsl.ts)
+    "strictBindCallApply": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,

@@ -630,9 +630,8 @@ const RhymesView = class extends ItemView {
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
    * navigator.clipboard (тем более из setTimeout) — без фолбэка копия молча терялась. */
   async writeClipboard(w: string) {
-    let _a;
     try {
-      if ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) {
+      if (typeof navigator.clipboard?.writeText === "function") {
         await navigator.clipboard.writeText(w);
         return true;
       }

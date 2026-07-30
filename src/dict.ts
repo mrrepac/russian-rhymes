@@ -111,6 +111,11 @@ export interface Phrases {
   lemma: string | null;
   items: PhraseItem[];
 }
+/** Строка files.json релиза словаря: что качать и какого оно размера. */
+interface DictFile {
+  name: string;
+  size: number;
+}
 /** Ряды из личного словаря синонимов — своим блоком во вкладке «Ассоциации». */
 export interface LocalSynDict {
   id: string;
@@ -159,6 +164,16 @@ function findLine(idx: TextIndex, prefix: string): string | null {
       hi = mid - 1;
   }
   return null;
+}
+/**
+ * files.json приходит из сети, поэтому его форму проверяем, а не принимаем на веру:
+ * иначе имя файла и размер расходятся по коду как any и подставляются куда угодно.
+ */
+function isDictFileList(v: unknown): v is DictFile[] {
+  return Array.isArray(v) && v.every((f: unknown) => {
+    const row = f as Partial<DictFile> | null;
+    return !!row && typeof row.name === "string" && typeof row.size === "number";
+  });
 }
 const RhymeDict = class {
   app: App;
@@ -355,9 +370,15 @@ const RhymeDict = class {
       return null;
     }
     this.blockCache.set(ck, text);
-    // соседние слова часто попадают в один блок, но держать их все — снова та же память
-    if (this.blockCache.size > BLOCK_CACHE)
-      this.blockCache.delete(this.blockCache.keys().next().value);
+    // соседние слова часто попадают в один блок, но держать их все — снова та же память.
+    // Map хранит порядок вставки, значит самый старый блок — первый ключ (итератор
+    // с break, а не keys().next().value: тот типизирован как any и течёт дальше)
+    if (this.blockCache.size > BLOCK_CACHE) {
+      for (const oldest of this.blockCache.keys()) {
+        this.blockCache.delete(oldest);
+        break;
+      }
+    }
     return text;
   }
   /** Строка блочного шарда: находим нужный блок по индексу и ищем строку уже в нём. */
@@ -680,8 +701,8 @@ const RhymeDict = class {
     this.activeDictDir = dir;
     const base = baseUrl.trim().replace(/\/+$/, "") + "/";
     const listResp = await requestUrl({ url: base + "files.json" });
-    const files = JSON.parse(listResp.text).files;
-    if (!Array.isArray(files) || files.length === 0)
+    const files = (JSON.parse(listResp.text) as { files?: unknown }).files;
+    if (!isDictFileList(files) || files.length === 0)
       throw new Error("empty files.json");
     let done = 0;
     for (const f of files) {
@@ -989,7 +1010,7 @@ const RhymeDict = class {
     }
     const { text, offsets } = idx;
     const n = offsets.length;
-    const skel = new Array(n);
+    const skel = new Array<string>(n);
     const ends = new Uint32Array(n);
     for (let i = 0; i < n; i++) {
       const start = offsets[i];
@@ -1223,7 +1244,7 @@ const RhymeDict = class {
    * струна…) — для созвучных зачинов строк. Слова отсортированы, поэтому нижнюю границу
    * префикса ищем бинарно, дальше линейный скан по блоку.
    */
-  alliterationsFor(word: string) {
+  alliterationsFor(word: string): RhymeEntry[] {
     let _a;
     if (!this.words)
       return [];
@@ -1259,7 +1280,7 @@ const RhymeDict = class {
         continue;
       out.push({ word: w, s: parseInt(s36, 36), f: +f, p, syl: countSyllables(w), exact: false });
     }
-    const byLemma = /* @__PURE__ */ new Map();
+    const byLemma = /* @__PURE__ */ new Map<string, RhymeEntry>();
     for (const e of out) {
       const lemma = (_a = this.lemmasOf(e.word)[0]) != null ? _a : e.word;
       const prev = byLemma.get(lemma);

@@ -4823,6 +4823,12 @@ function findLine(idx, prefix) {
   }
   return null;
 }
+function isDictFileList(v) {
+  return Array.isArray(v) && v.every((f) => {
+    const row = f;
+    return !!row && typeof row.name === "string" && typeof row.size === "number";
+  });
+}
 var RhymeDict = class {
   constructor(app, pluginDir) {
     this.app = app;
@@ -4954,8 +4960,12 @@ var RhymeDict = class {
       return null;
     }
     this.blockCache.set(ck, text);
-    if (this.blockCache.size > BLOCK_CACHE)
-      this.blockCache.delete(this.blockCache.keys().next().value);
+    if (this.blockCache.size > BLOCK_CACHE) {
+      for (const oldest of this.blockCache.keys()) {
+        this.blockCache.delete(oldest);
+        break;
+      }
+    }
     return text;
   }
   /** Строка блочного шарда: находим нужный блок по индексу и ищем строку уже в нём. */
@@ -5260,7 +5270,7 @@ var RhymeDict = class {
     const base = baseUrl.trim().replace(/\/+$/, "") + "/";
     const listResp = await (0, import_obsidian.requestUrl)({ url: base + "files.json" });
     const files = JSON.parse(listResp.text).files;
-    if (!Array.isArray(files) || files.length === 0)
+    if (!isDictFileList(files) || files.length === 0)
       throw new Error("empty files.json");
     let done = 0;
     for (const f of files) {
@@ -6702,9 +6712,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
    * navigator.clipboard (тем более из setTimeout) — без фолбэка копия молча терялась. */
   async writeClipboard(w) {
-    let _a;
+    var _a;
     try {
-      if ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) {
+      if (typeof ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) === "function") {
         await navigator.clipboard.writeText(w);
         return true;
       }
@@ -8229,7 +8239,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       v = Number.isFinite(n) && n >= 0 ? Math.min(n, 2e3) : DEFAULT_SETTINGS.doubleCopyMs;
     }
     if (key === "dictUrl")
-      v = String(v).trim();
+      v = typeof v === "string" ? v.trim() : DEFAULT_SETTINGS.dictUrl;
     if (key === "startupLoad")
       v = typeof v === "string" && STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
     this.plugin.settings[key] = v;

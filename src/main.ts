@@ -469,8 +469,9 @@ const RussianRhymesPlugin = class extends Plugin {
       return exact.path;
     const lower = dir.toLowerCase();
     // папку узнаём по children, а не instanceof TFolder: тестовый стенд подаёт сюда
-    // обычные объекты, и проверка на класс его бы сломала
-    const isFolder = (f: TAbstractFile): f is TFolder => Array.isArray((f as TFolder).children);
+    // обычные объекты, и проверка на класс его бы сломала. Приведение — к форме, а не
+    // к самому TFolder: линтер каталога справедливо не любит приведения к TFile/TFolder
+    const isFolder = (f: TAbstractFile): f is TFolder => Array.isArray((f as { children?: unknown }).children);
     for (const f of this.app.vault.getAllLoadedFiles()) {
       if (isFolder(f) && f.path.toLowerCase() === lower)
         return f.path;
@@ -621,8 +622,10 @@ const RhymesSettingTab = class extends PluginSettingTab {
       const n = Number(v);
       v = Number.isFinite(n) && n >= 0 ? Math.min(n, 2e3) : DEFAULT_SETTINGS.doubleCopyMs;
     }
+    // значение приходит как unknown: строку чистим, всё прочее (правленый вручную
+    // data.json) откатываем к адресу по умолчанию, а не приводим к «[object Object]»
     if (key === "dictUrl")
-      v = String(v).trim();
+      v = typeof v === "string" ? v.trim() : DEFAULT_SETTINGS.dictUrl;
     if (key === "startupLoad")
       v = typeof v === "string" && STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
     // настройки адресуются строковым ключом — так устроен декларативный API
