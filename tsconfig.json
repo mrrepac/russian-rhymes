@@ -7,6 +7,9 @@
     "allowJs": true,
     "checkJs": false,
     "strict": false,
+    // включено отдельно от strict: именно неявные any кормят правила no-unsafe-* у
+    // линтера каталога. strictNullChecks — отдельная большая работа, пока не он
+    "noImplicitAny": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,

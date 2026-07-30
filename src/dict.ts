@@ -75,7 +75,18 @@ export interface Definitions {
   lemma: string; // слово, чьи значения показаны (после редиректа форма→лемма)
   etymology?: string; // происхождение слова (только Викисловарь)
   groups: DefGroup[];
+  // те же группы по источникам: Викисловарь отдельно от личных словарей. Нужны,
+  // чтобы статья формы не затирала статью леммы (см. definitionsFor)
+  wiki?: DefGroup[];
+  local?: DefGroup[];
 }
+/** Разобранная статья Викисловаря: происхождение и группы значений. */
+interface WikiRecord {
+  etymology?: string;
+  groups: DefGroup[];
+}
+/** Строка манифеста личных словарей: что грузить и в каком порядке. Счётчик слов живёт в настройках. */
+type ManifestEntry = Pick<LocalDict, "id" | "name" | "enabled" | "kind">;
 export interface FormRow {
   label: string; // грамматическая метка: «Р. ед.», «прош. м.», «наст. 1л. ед.»
   form: string; // форма с ударением
@@ -117,7 +128,7 @@ const DEF_FS = "";
 const BLOCK_CACHE = 6;
 // шарды второй волны: формы и толкования, 360 МБ из ~500 МБ всего словаря
 const HEAVY_SHARDS = ["forms", "definitions"];
-function buildIndex(text) {
+function buildIndex(text: string): TextIndex {
   let count = 1;
   for (let i = 0; i < text.length; i++)
     if (text.charCodeAt(i) === 10)
@@ -130,7 +141,7 @@ function buildIndex(text) {
   }
   return { text, offsets };
 }
-function findLine(idx, prefix) {
+function findLine(idx: TextIndex, prefix: string): string | null {
   const { text, offsets } = idx;
   let lo = 0;
   let hi = offsets.length - 1;
@@ -180,14 +191,14 @@ const RhymeDict = class {
   yoMap: Map<string, string>;
   local: Map<string, LocalIndex>;
   localBad: Set<string>;
-  manifest: LocalDict[];
+  manifest: ManifestEntry[];
   localOrder: string[];
   blocks: Map<string, BlockIndex>;
   blockCache: Map<string, string>;
   rhymeSkel: string[] | null;
   rhymeKeyEnd: Uint32Array | null;
 
-  constructor(app, pluginDir) {
+  constructor(app: App, pluginDir: string) {
     this.app = app;
     this.pluginDir = pluginDir;
     // папка личных словарей внутри хранилища; пусто — старое место, рядом с плагином
@@ -269,7 +280,7 @@ const RhymeDict = class {
     return this.heavyStatus === "ready" || this.hasBlocks("forms") && this.hasBlocks("definitions");
   }
   /** Читается ли шард блоками с диска (вместо загрузки целиком в память). */
-  hasBlocks(name) {
+  hasBlocks(name: string) {
     return this.blocks.has(name);
   }
   /**
@@ -277,7 +288,7 @@ const RhymeDict = class {
    * пришёл бы весь файл целиком, что как раз и надо избежать. Не получилось — шард
    * останется на старом пути (грузится в память), поэтому молча выходим.
    */
-  async loadBlockIndex(name) {
+  async loadBlockIndex(name: string) {
     const raw = await this.readGzPath(this.dictPath(`${name}.blkidx.gz`));
     if (raw === null)
       return;
@@ -306,7 +317,7 @@ const RhymeDict = class {
     }
   }
   /** Сжатый кусок блока i — Range-запросом по ресурсному URL файла. */
-  async readRange(name, i) {
+  async readRange(name: string, i: number) {
     const bi = this.blocks.get(name);
     if (!bi)
       return null;
@@ -328,7 +339,7 @@ const RhymeDict = class {
     }
   }
   /** Распакованный текст блока i, с кэшем на несколько последних. */
-  async blockText(name, i) {
+  async blockText(name: string, i: number) {
     const ck = name + ":" + i;
     const hit = this.blockCache.get(ck);
     if (hit !== void 0)
@@ -350,7 +361,7 @@ const RhymeDict = class {
     return text;
   }
   /** Строка блочного шарда: находим нужный блок по индексу и ищем строку уже в нём. */
-  async blockLine(name, prefix) {
+  async blockLine(name: string, prefix: string) {
     const bi = this.blocks.get(name);
     if (!bi)
       return null;
@@ -371,7 +382,7 @@ const RhymeDict = class {
     return text === null ? null : findLine(buildIndex(text), prefix);
   }
   /** Строка шарда: из памяти, если он загружен целиком, иначе с диска по блокам. */
-  async shardLine(name, idx, prefix) {
+  async shardLine(name: string, idx: TextIndex | null, prefix: string) {
     return idx ? findLine(idx, prefix) : this.blockLine(name, prefix);
   }
   /** Загрузка второй волны; повторные вызовы ждут один и тот же промис. */
@@ -394,8 +405,8 @@ const RhymeDict = class {
     // объектами, а не парами: у массива пар TS выводит на элемент union «строка | функция»,
     // и name + ".txt.gz" ниже становится сложением строки с функцией
     const heavy = [
-      { name: "forms", set: (i) => this.formsIdx = i },
-      { name: "definitions", set: (i) => this.defs = i }
+      { name: "forms", set: (i: TextIndex) => this.formsIdx = i },
+      { name: "definitions", set: (i: TextIndex) => this.defs = i }
     ];
     for (const { name, set } of heavy) {
       // блочный шард в память не тянем — ради этого всё и затевалось
@@ -411,7 +422,7 @@ const RhymeDict = class {
     }
     this.heavyStatus = "ready";
   }
-  readGz(name) {
+  readGz(name: string) {
     // файл основного словаря качается заново по кнопке, поэтому битый можно снести
     // Битый шард можно снести — он качается заново по кнопке. Но НЕ когда словарь лежит
     // в хранилище: удаление уедет синхронизацией и убьёт исправную копию на другом
@@ -425,7 +436,7 @@ const RhymeDict = class {
    * и на второе устройство. Поэтому битый личный словарь остаётся лежать, а плагин о нём
    * говорит вслух (localBad).
    */
-  async readGzPath(path, dropIfCorrupt = false) {
+  async readGzPath(path: string, dropIfCorrupt = false) {
     const name = path.slice(path.lastIndexOf("/") + 1);
     const adapter = this.app.vault.adapter;
     if (!await adapter.exists(path))
@@ -469,18 +480,18 @@ const RhymeDict = class {
     // объектами, а не парами: у массива пар TS выводит на элемент union «строка | функция»,
     // и set(...) ниже перестаёт быть вызываемым (то же было со списком тяжёлых шардов)
     const opt = [
-      { name: "synonyms.txt.gz", set: (i) => this.syns = i },
-      { name: "antonyms.txt.gz", set: (i) => this.ants = i },
-      { name: "associations.txt.gz", set: (i) => this.assoc = i },
-      { name: "hypernyms.txt.gz", set: (i) => this.hyper = i },
-      { name: "hyponyms.txt.gz", set: (i) => this.hypo = i },
-      { name: "related.txt.gz", set: (i) => this.related = i },
-      { name: "idioms.txt.gz", set: (i) => this.idioms = i },
-      { name: "proverbs.txt.gz", set: (i) => this.proverbs = i },
-      { name: "metagrams.txt.gz", set: (i) => this.metagrams = i },
-      { name: "anagrams.txt.gz", set: (i) => this.anagrams = i },
-      { name: "lemmas.txt.gz", set: (i) => this.lemmas = i },
-      { name: "phrases.txt.gz", set: (i) => this.phrasesIdx = i }
+      { name: "synonyms.txt.gz", set: (i: TextIndex) => this.syns = i },
+      { name: "antonyms.txt.gz", set: (i: TextIndex) => this.ants = i },
+      { name: "associations.txt.gz", set: (i: TextIndex) => this.assoc = i },
+      { name: "hypernyms.txt.gz", set: (i: TextIndex) => this.hyper = i },
+      { name: "hyponyms.txt.gz", set: (i: TextIndex) => this.hypo = i },
+      { name: "related.txt.gz", set: (i: TextIndex) => this.related = i },
+      { name: "idioms.txt.gz", set: (i: TextIndex) => this.idioms = i },
+      { name: "proverbs.txt.gz", set: (i: TextIndex) => this.proverbs = i },
+      { name: "metagrams.txt.gz", set: (i: TextIndex) => this.metagrams = i },
+      { name: "anagrams.txt.gz", set: (i: TextIndex) => this.anagrams = i },
+      { name: "lemmas.txt.gz", set: (i: TextIndex) => this.lemmas = i },
+      { name: "phrases.txt.gz", set: (i: TextIndex) => this.phrasesIdx = i }
     ];
     for (const { name, set } of opt) {
       const raw = await this.readGz(name);
@@ -516,12 +527,12 @@ const RhymeDict = class {
    * 72 МБ основного словаря), поэтому на втором устройстве список словарей был, а самих
    * словарей не было. Папка внутри хранилища едет как обычные файлы.
    */
-  setLocalDir(dir) {
+  setLocalDir(dir: string) {
     const clean = (dir != null ? dir : "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
     this.localDir = clean ? normalizePath(clean) : "";
   }
   /** Папка основного словаря внутри хранилища; пусто — прежнее место в папке плагина. */
-  setMainDir(dir) {
+  setMainDir(dir: string) {
     const clean = (dir != null ? dir : "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
     this.mainDir = clean ? normalizePath(clean) : "";
   }
@@ -534,7 +545,7 @@ const RhymeDict = class {
     return normalizePath(`${this.pluginDir}/dict`);
   }
   /** Файл словаря там, где он реально нашёлся при загрузке (до неё — прежнее место). */
-  dictPath(name) {
+  dictPath(name: string) {
     return normalizePath(`${this.activeDictDir || this.legacyDictDir()}/${name}`);
   }
   /**
@@ -552,7 +563,7 @@ const RhymeDict = class {
     this.activeDictDir = this.targetDictDir();
   }
   /** Создать папку словаря по уровням (в хранилище её может не быть вовсе). */
-  async ensureDictDir(dir) {
+  async ensureDictDir(dir: string) {
     const adapter = this.app.vault.adapter;
     let path = "";
     for (const part of dir.split("/")) {
@@ -566,7 +577,7 @@ const RhymeDict = class {
    * переезд. Файл, который уже есть на новом месте, не перезаписываем. onProgress(готово,
    * всего, имя) — переезд идёт десятками мегабайт, без индикатора это выглядит зависанием.
    */
-  async relocateDict(oldDir, onProgress) {
+  async relocateDict(oldDir: string, onProgress?: (done: number, total: number, name: string) => void) {
     const adapter = this.app.vault.adapter;
     const dst = this.targetDictDir();
     if (!oldDir || oldDir === dst)
@@ -602,19 +613,19 @@ const RhymeDict = class {
     this.activeDictDir = dst;
     return moved;
   }
-  localFilePath(id) {
+  localFilePath(id: string) {
     return this.localDir ? normalizePath(`${this.localDir}/local-${id}.txt.gz`) : this.legacyLocalPath(id);
   }
   /** Прежнее место — внутри папки плагина. */
-  legacyLocalPath(id) {
+  legacyLocalPath(id: string) {
     return normalizePath(`${this.pluginDir}/dict/local-${id}.txt.gz`);
   }
   /** Файл словаря лежит на месте, но не читается — его надо ввозить из .dsl заново. */
-  isLocalBroken(id) {
+  isLocalBroken(id: string) {
     return this.localBad.has(id);
   }
   /** Есть ли файл словаря на этом устройстве (список-то приезжает синхронизацией). */
-  async localFileExists(id) {
+  async localFileExists(id: string) {
     const adapter = this.app.vault.adapter;
     if (await adapter.exists(this.localFilePath(id)))
       return true;
@@ -636,7 +647,7 @@ const RhymeDict = class {
    * старого места в плагине (разовая миграция при загрузке), иначе смена папки в настройках.
    * Если в новой папке файл уже есть, старый не трогаем — он там лишний, но и не потерян.
    */
-  async relocateLocalDicts(oldDir) {
+  async relocateLocalDicts(oldDir: string) {
     const adapter = this.app.vault.adapter;
     let moved = 0;
     for (const d of this.manifest) {
@@ -660,7 +671,7 @@ const RhymeDict = class {
    * (local-*) не трогаются. Возобновляемо: уже скачанный файл нужного размера
    * пропускается. onProgress(done, total, name) — для индикатора.
    */
-  async downloadDict(baseUrl, onProgress) {
+  async downloadDict(baseUrl: string, onProgress?: (done: number, total: number, name: string) => void) {
     const adapter = this.app.vault.adapter;
     // качаем сразу в папку из настроек: если словарь живёт в хранилище, скачанное
     // тут же поедет синхронизацией на остальные устройства
@@ -700,7 +711,7 @@ const RhymeDict = class {
    * весь ответ в памяти (37 МБ одним куском роняют Obsidian на телефоне). Если сервер
    * игнорирует Range (вернул весь файл первым куском) — используем как есть.
    */
-  async fetchChunked(url, size) {
+  async fetchChunked(url: string, size: number) {
     const CHUNK = 3 * 1024 * 1024;
     if (size <= CHUNK)
       return (await requestUrl({ url })).arrayBuffer;
@@ -733,8 +744,8 @@ const RhymeDict = class {
     await this.load();
   }
   /** Разбор generator.txt.gz: секции «#n»/«#v»/«#a», строки «слово\tслой». */
-  parseGenerator(raw) {
-    const g = { n: [], v: [], a: [] };
+  parseGenerator(raw: string) {
+    const g: GenPools = { n: [], v: [], a: [] };
     let cur = null;
     for (const line of raw.split("\n")) {
       if (line === "#n")
@@ -759,7 +770,7 @@ const RhymeDict = class {
   }
   /** Объединённый пул слов для генератора по выбранным категориям и слоям (без повторов).
    * Перемешивание и «мешок без повторов» — на стороне view. */
-  generatorPool(cats, tiers) {
+  generatorPool(cats: GenCat[], tiers: number[]) {
     const out = [];
     for (const c of cats) {
       if (c === "char")
@@ -777,7 +788,7 @@ const RhymeDict = class {
    * порядке показывать. Вызывать до load(); повторный вызов синхронизирует порядок
    * и имена уже загруженных индексов.
    */
-  setLocalManifest(dicts) {
+  setLocalManifest(dicts: LocalDict[]) {
     this.manifest = dicts.map((d) => ({ id: d.id, name: d.name, enabled: d.enabled, kind: d.kind === "syns" ? "syns" : "defs" }));
     this.localOrder = dicts.map((d) => d.id);
     for (const d of dicts) {
@@ -790,7 +801,7 @@ const RhymeDict = class {
     }
   }
   /** Включить/отключить личный словарь в выдаче (файл и индекс остаются загруженными). */
-  setEnabled(id, enabled) {
+  setEnabled(id: string, enabled: boolean) {
     const e = this.local.get(id);
     if (e)
       e.enabled = enabled;
@@ -799,7 +810,7 @@ const RhymeDict = class {
       m.enabled = enabled;
   }
   /** Добавить/заменить личный словарь: записать файл, построить индекс, встать в конец порядка. */
-  async importDict(id, name, entries, kind) {
+  async importDict(id: string, name: string, entries: Map<string, string[]>, kind: DictKind) {
     const lines = [];
     for (const [w, g] of entries)
       lines.push(`${w}	${g.join("|")}`);
@@ -816,7 +827,7 @@ const RhymeDict = class {
     return entries.size;
   }
   /** Удалить личный словарь (файл + индекс + место в порядке). */
-  async deleteDict(id) {
+  async deleteDict(id: string) {
     const adapter = this.app.vault.adapter;
     for (const path of [this.localFilePath(id), this.legacyLocalPath(id)]) {
       if (await adapter.exists(path))
@@ -827,20 +838,20 @@ const RhymeDict = class {
     this.localOrder = this.localOrder.filter((x) => x !== id);
   }
   /** Переименовать личный словарь (имя — подпись группы во вкладке «Значение»). */
-  renameDict(id, name) {
+  renameDict(id: string, name: string) {
     const e = this.local.get(id);
     if (e)
       e.name = name;
   }
   /** Леммы словоформы по словарю Зализняка («разуму» -> [разум]). */
-  lemmasOf(word) {
+  lemmasOf(word: string) {
     if (!this.lemmas)
       return [];
     const line = findLine(this.lemmas, word + "	");
     return line ? line.slice(word.length + 1).split(",") : [];
   }
   /** Простой формат личных DSL-словарей: "POS:толк1;толк2|POS:…" (без примеров/этимологии). */
-  parseLocalGroups(rec) {
+  parseLocalGroups(rec: string): DefGroup[] {
     return rec.split("|").map((g) => {
       const colon = g.indexOf(":");
       const pos = colon > 0 ? g.slice(0, colon) : "";
@@ -849,7 +860,7 @@ const RhymeDict = class {
     });
   }
   /** Богатая статья Викисловаря: этимология + группы с примерами (см. build-definitions.mjs). */
-  parseWikiRecord(rec) {
+  parseWikiRecord(rec: string): WikiRecord {
     const parts = rec.split(DEF_GS);
     const etymology = parts[0] || "";
     const groups = [];
@@ -869,7 +880,7 @@ const RhymeDict = class {
     return { etymology, groups };
   }
   /** Группы личных толковых словарей для слова — в порядке localOrder, каждая подписана именем словаря. */
-  localDefGroups(word) {
+  localDefGroups(word: string): DefGroup[] {
     const out = [];
     for (const id of this.localOrder) {
       const e = this.local.get(id);
@@ -888,10 +899,10 @@ const RhymeDict = class {
    * Статья толкового словаря по точному слову: сначала Викисловарь
    * (с form_of-редиректом), затем личные DSL в заданном пользователем порядке.
    */
-  async defArticle(word) {
+  async defArticle(word: string) {
     const localGroups = this.localDefGroups(word);
     let lemma = word;
-    let mainGroups = [];
+    let mainGroups: DefGroup[] = [];
     let etymology = "";
     if (this.defs || this.hasBlocks("definitions")) {
       let line = await this.shardLine("definitions", this.defs, lemma + "	");
@@ -924,11 +935,11 @@ const RhymeDict = class {
    * («шнурки», «юмора»), берём статью леммы — иначе «Значение» показывало бы одни
    * личные словари, у которых форма нашлась как отдельное заглавное слово.
    */
-  async definitionsFor(word) {
+  async definitionsFor(word: string): Promise<Definitions | null> {
     const own = await this.defArticle(word);
     if (own && own.wiki.length > 0)
       return own;
-    const names = [];
+    const names: string[] = [];
     const groups = [];
     const wiki = [];
     let etymology = own ? own.etymology : void 0;
@@ -992,8 +1003,8 @@ const RhymeDict = class {
     this.rhymeSkel = skel;
     this.rhymeKeyEnd = ends;
   }
-  assonancesFor(word, s) {
-    const res = { conson: [], asson: [] };
+  assonancesFor(word: string, s: number) {
+    const res: { conson: RhymeEntry[]; asson: RhymeEntry[] } = { conson: [], asson: [] };
     if (!this.rhymes)
       return res;
     const { key } = rhymeKey(word, s);
@@ -1028,14 +1039,14 @@ const RhymeDict = class {
         out.push({ word: w, s: parseInt(s36, 36), f: +f, p, syl: countSyllables(w), exact: false });
       }
     }
-    const cmp = (a, b) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    const cmp = (a: RhymeEntry, b: RhymeEntry) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
     res.conson.sort(cmp);
     res.asson.sort(cmp);
     res.conson = res.conson.slice(0, 2e3);
     res.asson = res.asson.slice(0, 2e3);
     return res;
   }
-  groupsAt(idx, word) {
+  groupsAt(idx: TextIndex | null, word: string): string[][] | null {
     if (!idx)
       return null;
     const line = findLine(idx, word + "	");
@@ -1044,11 +1055,11 @@ const RhymeDict = class {
     return line.slice(word.length + 1).split("|").map((g) => g.split(","));
   }
   /** Свои группы слова, иначе — группы его лемм (с пометкой, чьи они). */
-  resolveGroups(get, word, maxGroups) {
+  resolveGroups(get: (w: string) => string[][] | null, word: string, maxGroups: number): Synonyms | null {
     const own = get(word);
     if (own)
       return { lemma: null, groups: own.slice(0, maxGroups) };
-    const names = [];
+    const names: string[] = [];
     const groups = [];
     for (const lm of this.lemmasOf(word).slice(0, 2)) {
       const g = get(lm);
@@ -1062,14 +1073,14 @@ const RhymeDict = class {
     return { lemma: names.join(", "), groups: groups.slice(0, maxGroups) };
   }
   /** Синонимы: Викисловарь + Абрамов/АОТ. */
-  synonymsFor(word) {
+  synonymsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.syns, w), word, 10);
   }
   /**
    * Личные словари синонимов — каждый отдельным блоком во вкладке «Синонимы»,
    * в том же порядке, что задан перетаскиванием в настройках.
    */
-  localSynDicts(word) {
+  localSynDicts(word: string): LocalSynDict[] {
     const out = [];
     for (const id of this.localOrder) {
       const e = this.local.get(id);
@@ -1082,34 +1093,34 @@ const RhymeDict = class {
     return out;
   }
   /** Антонимы (Викисловарь). */
-  antonymsFor(word) {
+  antonymsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.ants, w), word, 3);
   }
   /** Ассоциации (КартаСлов). */
-  associationsFor(word) {
+  associationsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.assoc, w), word, 3);
   }
   /** Гиперонимы — общее понятие (Викисловарь): дорога → пространство, линия. */
-  hypernymsFor(word) {
+  hypernymsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.hyper, w), word, 1);
   }
   /** Гипонимы — частные виды (Викисловарь): дорога → улица, тропа, шоссе. */
-  hyponymsFor(word) {
+  hyponymsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.hypo, w), word, 1);
   }
   /** Родственные слова — однокоренные (Викисловарь): быстрый → быстро, быстрота. */
-  relatedFor(word) {
+  relatedFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.related, w), word, 1);
   }
   /** Метаграммы — слова, отличающиеся одной буквой (Викисловарь): хлеб → Глеб, хлев. */
-  metagramsFor(word) {
+  metagramsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.metagrams, w), word, 1);
   }
   /** Анаграммы (Викисловарь): дом → мод. */
-  anagramsFor(word) {
+  anagramsFor(word: string) {
     return this.resolveGroups((w) => this.groupsAt(this.anagrams, w), word, 1);
   }
-  phraseItems(word) {
+  phraseItems(word: string): PhraseItem[] | null {
     if (!this.phrasesIdx)
       return null;
     const line = findLine(this.phrasesIdx, word + "	");
@@ -1121,11 +1132,11 @@ const RhymeDict = class {
     });
   }
   /** Фразы и идиомы со словом (Викисловарь); свои, иначе — по леммам. */
-  phrasesFor(word) {
+  phrasesFor(word: string): Phrases | null {
     const own = this.phraseItems(word);
     if (own)
       return { lemma: null, items: own };
-    const names = [];
+    const names: string[] = [];
     const items = [];
     const seen = /* @__PURE__ */ new Set();
     for (const lm of this.lemmasOf(word).slice(0, 2)) {
@@ -1144,18 +1155,18 @@ const RhymeDict = class {
       return null;
     return { lemma: names.join(", "), items };
   }
-  stringListAt(idx, word, sep) {
+  stringListAt(idx: TextIndex | null, word: string, sep: string): string[] | null {
     if (!idx)
       return null;
     const line = findLine(idx, word + "	");
     return line ? line.slice(word.length + 1).split(sep) : null;
   }
   /** Свой список строк, иначе — списки лемм (идиомы/пословицы; sep — разделитель файла). */
-  resolveStringList(idx, word, sep) {
+  resolveStringList(idx: TextIndex | null, word: string, sep: string): StringList | null {
     const own = this.stringListAt(idx, word, sep);
     if (own)
       return { lemma: null, items: own };
-    const names = [];
+    const names: string[] = [];
     const items = [];
     const seen = /* @__PURE__ */ new Set();
     for (const lm of this.lemmasOf(word).slice(0, 2)) {
@@ -1174,16 +1185,16 @@ const RhymeDict = class {
     return { lemma: names.join(", "), items };
   }
   /** Устойчивые сочетания и идиомы (Викисловарь): вот где собака зарыта. */
-  idiomsFor(word) {
+  idiomsFor(word: string) {
     return this.resolveStringList(this.idioms, word, "|");
   }
   /** Пословицы и поговорки (Викисловарь): хлеб — всему голова. */
-  proverbsFor(word) {
+  proverbsFor(word: string) {
     return this.resolveStringList(this.proverbs, word, "|");
   }
   /** Парадигма словоформ с ударениями (Викисловарь); свои, иначе — у леммы формы. */
-  async formsFor(word) {
-    const parse = async (w) => {
+  async formsFor(word: string): Promise<Forms | null> {
+    const parse = async (w: string) => {
       const line = await this.shardLine("forms", this.formsIdx, w + "	");
       if (!line)
         return null;
@@ -1203,7 +1214,7 @@ const RhymeDict = class {
     return null;
   }
   /** Ёфикация ввода: е-написание -> однозначная ё-версия (береза->берёза); мед/небо/лет не трогает. */
-  normalizeYo(word) {
+  normalizeYo(word: string) {
     let _a;
     return (_a = this.yoMap.get(word)) != null ? _a : word;
   }
@@ -1212,7 +1223,7 @@ const RhymeDict = class {
    * струна…) — для созвучных зачинов строк. Слова отсортированы, поэтому нижнюю границу
    * префикса ищем бинарно, дальше линейный скан по блоку.
    */
-  alliterationsFor(word) {
+  alliterationsFor(word: string) {
     let _a;
     if (!this.words)
       return [];
@@ -1260,7 +1271,7 @@ const RhymeDict = class {
     return list.slice(0, 2e3);
   }
   /** Варианты ударения слова или null, если слова нет. */
-  lookup(word) {
+  lookup(word: string): StressVariant[] | null {
     if (!this.words)
       return null;
     const line = findLine(this.words, word + "	");
@@ -1272,12 +1283,12 @@ const RhymeDict = class {
     });
   }
   /** Глагол ли слово хоть в одном варианте — для отсева приставочных пар. */
-  isVerb(word) {
+  isVerb(word: string) {
     const v = this.lookup(word);
     return !!v && v.some((x) => x.p === "v");
   }
   /** Отранжированные рифмы к слову в конкретном варианте ударения. */
-  rhymesFor(word, s) {
+  rhymesFor(word: string, s: number) {
     if (!this.rhymes)
       return [];
     const { key, support } = rhymeKey(word, s);

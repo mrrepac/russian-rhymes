@@ -8228,7 +8228,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     if (key === "dictUrl")
       v = String(v).trim();
     if (key === "startupLoad")
-      v = STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
+      v = typeof v === "string" && STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
     this.plugin.settings[key] = v;
     await this.plugin.saveSettings();
     if (key === "hideDictDir")

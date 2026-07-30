@@ -5,11 +5,17 @@ const SYN_RE = /^[а-яё]+([ -][а-яё]+){0,2}$/;
 const MAX_GLOSSES = 10;
 const MAX_GROUPS = 6;
 const MAX_DECOMP = 200 * 1024 * 1024;
-function ungzipCapped(bytes) {
+export type DslType = "definitions" | "synonyms";
+/** Разобранный словарь: имя из #NAME и статьи «заголовок -> строки групп». */
+export interface DslConversion {
+  name: string;
+  entries: Map<string, string[]>;
+}
+function ungzipCapped(bytes: Uint8Array): Uint8Array {
   const inflator = new Inflate_1();
   const passThrough = inflator.onData.bind(inflator);
   let total = 0;
-  inflator.onData = (chunk) => {
+  inflator.onData = (chunk: Uint8Array) => {
     total += chunk.length;
     if (total > MAX_DECOMP)
       throw new Error("DSL too large after decompression");
@@ -18,12 +24,14 @@ function ungzipCapped(bytes) {
   inflator.push(bytes, true);
   if (inflator.err)
     throw new Error("bad gzip: " + inflator.msg);
-  return inflator.result;
+  // pako объявляет result как «строка или байты»: строка бывает только в строковом
+  // режиме, который тут не включён
+  return inflator.result as Uint8Array;
 }
-function cleanHeadword(s) {
+function cleanHeadword(s: string) {
   return s.replace(/\{([^}]*)\}/g, "$1").replace(/\[\/?[^\]]*\]/g, "").replace(/\\(.)/g, "$1").replace(/['’´]/g, "").trim().toLowerCase();
 }
-function cleanBody(s) {
+function cleanBody(s: string) {
   return s.replace(/\{\{[^}]*\}\}/g, "").replace(/\{([^}]*)\}/g, "$1").replace(/\[\/?[^\]]*\]/g, "").replace(/[[\]]/g, "").replace(/<<|>>/g, "").replace(/\\(.)/g, "$1").replace(/~/g, "").replace(/\s+/g, " ").trim();
 }
 const SYN_COUNT_RE = /кол-?\s?во синонимов/i;
@@ -38,11 +46,11 @@ const SYN_MAX_LEN = 28;
  * «1. см. <<путь>>» и ряды с пометами «распевать (разг.)». Угловые скобки снимает
  * cleanBody, здесь убираем маркеры, нумерацию, пометы в скобках и цифры-ранги.
  */
-function synWords(line, head) {
+function synWords(line: string, head: string): string[] {
   if (SYN_COUNT_RE.test(line))
     return [];
   const cleaned = line.replace(/^[\s•·*–—-]+/, "").replace(/^\d+[.)]\s*/, "").replace(/^[^:,;]{1,24}:\s*/, "").replace(/\([^)]*\)/g, " ").replace(/\d+/g, " ");
-  const out = [];
+  const out: string[] = [];
   for (const part of cleaned.split(/[,;]/)) {
     const w = part.trim().toLowerCase().replace(/^см\.?\s*/, "").replace(/\.$/, "").trim();
     if (!w || w.length > SYN_MAX_LEN || w === head || SYN_STOP.has(w) || !SYN_RE.test(w) || out.includes(w))
@@ -51,8 +59,8 @@ function synWords(line, head) {
   }
   return out;
 }
-function convertDsl(data, type) {
-  let bytes = new Uint8Array(data);
+function convertDsl(data: ArrayBuffer, type: DslType): DslConversion {
+  let bytes: Uint8Array = new Uint8Array(data);
   if (bytes.length > 2 && bytes[0] === 31 && bytes[1] === 139)
     bytes = ungzipCapped(bytes);
   let enc = "utf-8";
@@ -67,7 +75,7 @@ function convertDsl(data, type) {
     if (marks > lim / 5)
       enc = "utf-16le";
   }
-  let text;
+  let text: string;
   if (enc === "utf-8") {
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -79,16 +87,16 @@ function convertDsl(data, type) {
   }
   const nameMatch = text.match(/#NAME\s+"([^"]*)"/);
   const name = nameMatch ? nameMatch[1] : "DSL";
-  const entries = /* @__PURE__ */ new Map();
-  let heads = [];
-  let body = [];
+  const entries = /* @__PURE__ */ new Map<string, string[]>();
+  let heads: string[] = [];
+  let body: string[] = [];
   const flush = () => {
     if (heads.length && body.length) {
       for (const head of heads) {
         if (!WORD_RE.test(head))
           continue;
         if (type === "definitions") {
-          const glosses = [];
+          const glosses: string[] = [];
           for (let g of body) {
             g = g.replace(/[\t|]/g, " ").replace(/;/g, ",");
             if (g && !glosses.includes(g))
@@ -104,7 +112,7 @@ function convertDsl(data, type) {
               arr.push(":" + glosses.join(";"));
           }
         } else {
-          const rows = [];
+          const rows: string[][] = [];
           for (const line of body) {
             const words = synWords(line, head);
             if (words.length)
@@ -115,12 +123,12 @@ function convertDsl(data, type) {
           // у ASIS каждый синоним на своей строке — из сотни строк вышла бы сотня групп
           // по одному слову; такие списки сводим в один ряд, а осмысленные группы
           // (значения у Александровой) оставляем как есть
-          const groups = rows.length > MAX_GROUPS ? [[].concat(...rows)] : rows;
+          const groups: string[][] = rows.length > MAX_GROUPS ? [([] as string[]).concat(...rows)] : rows;
           let arr = entries.get(head);
           if (!arr)
             entries.set(head, arr = []);
           for (const words of groups) {
-            const uniq = [];
+            const uniq: string[] = [];
             for (const w of words)
               if (!uniq.includes(w))
                 uniq.push(w);

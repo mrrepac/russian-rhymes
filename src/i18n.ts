@@ -274,7 +274,9 @@ const ru = {
   startupRhymes: "\u0420\u0438\u0444\u043C\u044B (~140 \u041C\u0411)",
   startupFull: "\u0420\u0438\u0444\u043C\u044B \u0438 \u0437\u043D\u0430\u0447\u0435\u043D\u0438\u044F (~500 \u041C\u0411)",
 };
-function t(key) {
+/** Ключ перевода: имя поля таблицы en — опечатка в t("…") станет ошибкой типов. */
+export type I18nKey = keyof typeof en;
+function t(key: I18nKey) {
   const lang = moment.locale();
   return (lang && lang.startsWith("ru") ? ru : en)[key];
 }

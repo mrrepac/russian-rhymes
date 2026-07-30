@@ -18,6 +18,7 @@
   "author": "mrrepac",
   "license": "MIT",
   "devDependencies": {
+    "@types/pako": "^2.0.4",
     "esbuild": "^0.25.0",
     "obsidian": "^1.13.1",
     "typescript": "^7.0.2"

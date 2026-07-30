@@ -25,8 +25,8 @@ interface HostPlugin {
 }
 
 const VIEW_TYPE_RHYMES = "russian-rhymes-view";
-const stripStress = (s) => s.replace(/́/g, "");
-const POS_LABEL = () => ({
+const stripStress = (s: string) => s.replace(/́/g, "");
+const POS_LABEL = (): Record<string, string> => ({
   n: t("posN"),
   v: t("posV"),
   a: t("posA"),
@@ -34,7 +34,7 @@ const POS_LABEL = () => ({
   i: t("posI"),
   x: ""
 });
-const lexCat = (f) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
+const lexCat = (f: number) => f >= 5 ? 0 : f >= 3 ? 1 : f >= 1 ? 2 : 3;
 const PAGE = 50;
 const PAGE_MORE = 200;
 // допустимые значения запоминаемых фильтров — data.json правят и руками
@@ -47,7 +47,7 @@ const STARTUP_KEYS = ["none", "rhymes", "full"];
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP = 10;
 const insertHint = () => t(Platform.isMobile ? "insertHintTouch" : "insertHint");
-const displayCmp = (a, b) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
+const displayCmp = (a: RhymeEntry, b: RhymeEntry) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
 const RhymesView = class extends ItemView {
   plugin: HostPlugin;
   word: string;
@@ -266,7 +266,7 @@ const RhymesView = class extends ItemView {
     });
   }
   /** Точка входа: показать слово (из двойного Ctrl+C, меню, команды, инпута или двойного клика по чипу). */
-  async showWord(raw) {
+  async showWord(raw: string) {
     let _a, _b;
     const ms = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
     if (!ms || ms.length === 0)
@@ -392,9 +392,9 @@ const RhymesView = class extends ItemView {
       case "allit":
         return this.allitAll;
       default: {
-        const seen = /* @__PURE__ */ new Set();
-        const out = [];
-        const push = (arr) => {
+        const seen = /* @__PURE__ */ new Set<string>();
+        const out: RhymeEntry[] = [];
+        const push = (arr: RhymeEntry[]) => {
           for (const e of arr) {
             if (seen.has(e.word))
               continue;
@@ -431,7 +431,7 @@ const RhymesView = class extends ItemView {
    * выдача мигала бы: недописанные и незнакомые слова, повтор текущего, набор в поле
    * поиска, вкладку генератора. Историю «назад» слежение не копит — это новая точка отсчёта.
    */
-  async followWord(raw) {
+  async followWord(raw: string) {
     const dict = this.plugin.dict;
     if (dict.status !== "ready")
       return;
@@ -455,7 +455,7 @@ const RhymesView = class extends ItemView {
   }
   /** Непустые разделы в визуальном порядке — для кнопок и циклической навигации. */
   availableTabs() {
-    const list = [];
+    const list: TabId[] = [];
     if (this.stress === null) {
       list.push("rhymes");
     } else if (this.all.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
@@ -473,7 +473,7 @@ const RhymesView = class extends ItemView {
     return list;
   }
   /** Ctrl+←/→: переход к соседнему доступному разделу (циклически). */
-  cycleTab(dir) {
+  cycleTab(dir: number) {
     if (!this.hasWord())
       return;
     const tabs = this.availableTabs();
@@ -486,7 +486,7 @@ const RhymesView = class extends ItemView {
     this.renderBody();
   }
   /** Клик по гласной: сменить ударение (и запомнить, если оно не словарное по умолчанию). */
-  setStress(i) {
+  setStress(i: number) {
     let _a, _b;
     if (this.stress === i)
       return;
@@ -503,7 +503,7 @@ const RhymesView = class extends ItemView {
   buildRelatedSet() {
     const set = /* @__PURE__ */ new Set<string>();
     const w0 = this.word;
-    const add = (s) => {
+    const add = (s: Synonyms | null) => {
       if (!s)
         return;
       for (const g of s.groups)
@@ -521,7 +521,7 @@ const RhymesView = class extends ItemView {
     add(this.associations);
     this.relatedWords = set;
   }
-  passesFilter(e) {
+  passesFilter(e: RhymeEntry) {
     if (this.semanticOnly && !this.relatedWords.has(e.word))
       return false;
     if (!this.plugin.settings.lexShow[lexCat(e.f)])
@@ -574,7 +574,7 @@ const RhymesView = class extends ItemView {
     return this.sylFilter !== 0 || this.posFilter !== "" || this.semanticOnly || this.soundKindPref !== "all";
   }
   /** Пусто: если виноваты фильтры — предложить сброс прямо в сообщении. */
-  renderEmpty(host) {
+  renderEmpty(host: HTMLElement) {
     const box = host.createDiv({ cls: "rr-status", text: t("noRhymes") });
     if (!this.filtersActive())
       return;
@@ -585,7 +585,7 @@ const RhymesView = class extends ItemView {
       this.renderSoundResults();
     });
   }
-  renderStatus(msg) {
+  renderStatus(msg: string) {
     this.bodyEl.empty();
     this.bodyEl.createDiv({ cls: "rr-status", text: msg });
   }
@@ -612,14 +612,14 @@ const RhymesView = class extends ItemView {
     });
   }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
-  copyWord(w) {
+  copyWord(w: string) {
     void this.writeClipboard(w).then((ok) => {
       new Notice(ok ? t("copied") + w : t("copyFail"));
     });
   }
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
    * navigator.clipboard (тем более из setTimeout) — без фолбэка копия молча терялась. */
-  async writeClipboard(w) {
+  async writeClipboard(w: string) {
     let _a;
     try {
       if ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) {
@@ -645,7 +645,7 @@ const RhymesView = class extends ItemView {
    * Вставить слово/фразу в заметку: заменить выделение, иначе слово под курсором
    * (то самое, к которому искали рифму), иначе просто вписать на место курсора.
    */
-  insertWord(text) {
+  insertWord(text: string) {
     const editor = this.plugin.getEditor();
     if (!editor) {
       new Notice(t("noEditor"));
@@ -671,9 +671,9 @@ const RhymesView = class extends ItemView {
    * Долгое нажатие по слову (телефон, где нет Alt) — вставка в заметку. Возвращает флаг
    * fired: клик, который webview пришлёт следом за нажатием, надо погасить.
    */
-  attachLongPressInsert(el, text) {
+  attachLongPressInsert(el: HTMLElement, text: string) {
     const state = { fired: false };
-    let press = null, px = 0, py = 0;
+    let press: number | null = null, px = 0, py = 0;
     /*
      * Таймеры ставим и гасим в окне самой панели (containerEl.win). Не activeWindow:
      * это окно, случайно оказавшееся в фокусе на момент вызова, — а панель могли
@@ -689,7 +689,7 @@ const RhymesView = class extends ItemView {
     };
     el.addEventListener(
       "touchstart",
-      (e) => {
+      (e: TouchEvent) => {
         const tp = e.touches[0];
         px = tp.clientX;
         py = tp.clientY;
@@ -708,7 +708,7 @@ const RhymesView = class extends ItemView {
     );
     el.addEventListener(
       "touchmove",
-      (e) => {
+      (e: TouchEvent) => {
         const tp = e.touches[0];
         if (Math.abs(tp.clientX - px) > LONG_PRESS_SLOP || Math.abs(tp.clientY - py) > LONG_PRESS_SLOP)
           cancelPress();
@@ -723,9 +723,9 @@ const RhymesView = class extends ItemView {
     return state;
   }
   /** Клик — копировать, Alt+клик или долгое нажатие — вставить в заметку (без поиска по двойному клику). */
-  attachCopyInsert(el, text) {
+  attachCopyInsert(el: HTMLElement, text: string) {
     const lp = this.attachLongPressInsert(el, text);
-    el.addEventListener("click", (e) => {
+    el.addEventListener("click", (e: MouseEvent) => {
       if (lp.fired) {
         lp.fired = false;
         return;
@@ -737,9 +737,9 @@ const RhymesView = class extends ItemView {
     });
   }
   /** Клик — копировать, двойной клик — искать рифмы к этому слову. Таймер, чтобы двойной не копировал. */
-  attachWordActions(el, word) {
+  attachWordActions(el: HTMLElement, word: string) {
     const lp = this.attachLongPressInsert(el, word);
-    let timer = null;
+    let timer: number | null = null;
     const cancel = () => {
       if (timer !== null) {
         this.containerEl.win.clearTimeout(timer);
@@ -747,7 +747,7 @@ const RhymesView = class extends ItemView {
         timer = null;
       }
     };
-    el.addEventListener("click", (e) => {
+    el.addEventListener("click", (e: MouseEvent) => {
       if (lp.fired) {
         lp.fired = false;
         cancel();
@@ -835,10 +835,10 @@ const RhymesView = class extends ItemView {
     }
   }
   /** Ряд больших кнопок-разделов (Рифмы · Значение · Ассоциации [· Генератор]); без данных — приглушены. */
-  renderTabs(avail) {
+  renderTabs(avail: Set<TabId>) {
     const tabsWrap = this.bodyEl.createDiv({ cls: "rr-bigtabs" });
     const row = tabsWrap.createDiv({ cls: "rr-bigtab-row" });
-    const defs = [
+    const defs: [TabId, string][] = [
       ["rhymes", t("tabRhymes")],
       ["meaning", t("tabMeaning")],
       ["assoc", t("tabAssoc")]
@@ -881,7 +881,7 @@ const RhymesView = class extends ItemView {
         this.bodyEl.createDiv({ cls: "rr-status", text: t("emptyHint") });
         return;
       }
-      this.renderTabs(/* @__PURE__ */ new Set(["gen"]));
+      this.renderTabs(/* @__PURE__ */ new Set<TabId>(["gen"]));
       if (this.tab === "gen")
         this.renderGenerator();
       else
@@ -929,7 +929,7 @@ const RhymesView = class extends ItemView {
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
     if (kinds.length >= 2 || this.allitAll.length > 0) {
-      const kindOpts = [["all", t("kindAll")], ...kinds.map(([k, l]) => [k, l])];
+      const kindOpts: [SoundKind, string][] = [["all", t("kindAll")], ...kinds.map(([k, l]) => [k, l] as [SoundKind, string])];
       if (this.allitAll.length > 0)
         kindOpts.push(["allit", t("kindAllit")]);
       this.filterMenu(
@@ -951,7 +951,7 @@ const RhymesView = class extends ItemView {
         }
       );
     }
-    const sylOpts = [[0, t("filterAll")], [1, "1"], [2, "2"], [3, "3"], [4, "4+"]];
+    const sylOpts: [number, string][] = [[0, t("filterAll")], [1, "1"], [2, "2"], [3, "3"], [4, "4+"]];
     this.filterMenu(
       bar,
       t("syllables"),
@@ -969,7 +969,7 @@ const RhymesView = class extends ItemView {
         }
       }
     );
-    const posOpts = [["", t("filterAll")], ["n", t("posN")], ["v", t("posV")], ["a", t("posA")], ["d", t("posD")], ["i", t("posI")]];
+    const posOpts: [string, string][] = [["", t("filterAll")], ["n", t("posN")], ["v", t("posV")], ["a", t("posA")], ["d", t("posD")], ["i", t("posI")]];
     this.filterMenu(
       bar,
       t("filterPos"),
@@ -987,7 +987,7 @@ const RhymesView = class extends ItemView {
         }
       }
     );
-    const lexOpts = [
+    const lexOpts: [number, string][] = [
       [0, t("lexBase")],
       [1, t("lexFreq")],
       [2, t("lexCommon")],
@@ -1051,7 +1051,7 @@ const RhymesView = class extends ItemView {
     }
   }
   /** Один чип-слово: клик — копия, двойной — рифмы к нему; класс по лексическому слою. */
-  renderChip(container, e, posLabel, lexLabel) {
+  renderChip(container: HTMLElement, e: RhymeEntry, posLabel: Record<string, string>, lexLabel: string[]) {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
     const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
@@ -1059,8 +1059,8 @@ const RhymesView = class extends ItemView {
     this.attachWordActions(chip, e.word);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
-  renderKindSections(host, posLabel, lexLabel) {
-    const src = [
+  renderKindSections(host: HTMLElement, posLabel: Record<string, string>, lexLabel: string[]) {
+    const src: [SoundKind, string, RhymeEntry[]][] = [
       ["exact", t("kindExact"), this.all.filter((e) => e.exact)],
       ["near", t("tabNear"), this.all.filter((e) => !e.exact)],
       ["conson", t("tabConson"), this.consAll],
@@ -1068,7 +1068,7 @@ const RhymesView = class extends ItemView {
       ["allit", t("kindAllit"), this.allitAll]
     ];
     let firstKind = null;
-    const toRender = [];
+    const toRender: [SoundKind, string, RhymeEntry[]][] = [];
     for (const [kind, label, entries] of src) {
       const list = entries.filter((e) => this.passesFilter(e)).sort(displayCmp);
       if (list.length === 0)
@@ -1087,7 +1087,7 @@ const RhymesView = class extends ItemView {
     }
   }
   /** Одна сворачиваемая секция вида: заголовок со счётчиком; чипы рисуются лениво при раскрытии. */
-  renderKindSection(host, kind, label, list, defaultOpen, posLabel, lexLabel) {
+  renderKindSection(host: HTMLElement, kind: SoundKind, label: string, list: RhymeEntry[], defaultOpen: boolean, posLabel: Record<string, string>, lexLabel: string[]) {
     let _a;
     const details = host.createEl("details", { cls: "rr-ksec" });
     details.open = (_a = this.sectionOpen[kind]) != null ? _a : defaultOpen;
@@ -1118,7 +1118,7 @@ const RhymesView = class extends ItemView {
     });
   }
   /** Кнопка-меню фильтра «подпись: значение ▾»; build наполняет выпадающее меню Obsidian. */
-  filterMenu(parent, label, value, active, build) {
+  filterMenu(parent: HTMLElement, label: string, value: string, active: boolean, build: (menu: Menu) => void) {
     const btn = parent.createEl("button", { cls: "rr-fbtn" + (active ? " is-set" : "") });
     btn.createSpan({ cls: "rr-fbtn-label", text: label + ":" });
     btn.createSpan({ cls: "rr-fbtn-val", text: value });
@@ -1131,7 +1131,7 @@ const RhymesView = class extends ItemView {
     });
   }
   /** Сворачиваемая таблица словоформ с ударениями — вверху вкладки «Значение». */
-  renderForms(host) {
+  renderForms(host: HTMLElement) {
     const f = this.forms;
     if (!f || f.rows.length === 0)
       return;
@@ -1202,7 +1202,7 @@ const RhymesView = class extends ItemView {
     wrap.createDiv({ cls: "rr-def-src", text: t("defSource") });
   }
   /** Вписать текст, сделав каждое русское слово кликабельным (клик — искать рифмы/значение к нему). */
-  appendClickableText(parent, text) {
+  appendClickableText(parent: HTMLElement, text: string) {
     const re = /[а-яёА-ЯЁ]+(?:-[а-яёА-ЯЁ]+)*/g;
     let last = 0;
     let m;
@@ -1212,7 +1212,7 @@ const RhymesView = class extends ItemView {
       const word = m[0];
       const span = parent.createSpan({ cls: "rr-defword", text: word });
       const lp = this.attachLongPressInsert(span, word);
-      span.addEventListener("click", (e) => {
+      span.addEventListener("click", (e: MouseEvent) => {
         if (lp.fired) {
           lp.fired = false;
           return;
@@ -1227,7 +1227,7 @@ const RhymesView = class extends ItemView {
     if (last < text.length)
       parent.appendText(text.slice(last));
   }
-  chipGroup(wrap, words) {
+  chipGroup(wrap: HTMLElement, words: string[]) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
     for (const w of words) {
       const chip = row.createSpan({ cls: "rr-chip", text: w });
@@ -1236,7 +1236,7 @@ const RhymesView = class extends ItemView {
     }
   }
   /** Сворачиваемый подраздел «Ассоциаций»: заголовок + счётчик, тело строит build; раскрытость на сессию. */
-  semSection(host, key, title, count, build) {
+  semSection(host: HTMLElement, key: string, title: string, count: number, build: (b: HTMLElement) => void) {
     let _a;
     const details = host.createEl("details", { cls: "rr-ssec" });
     details.open = (_a = this.semOpen[key]) != null ? _a : true;
@@ -1251,10 +1251,10 @@ const RhymesView = class extends ItemView {
   /** Смысловой раздел: синонимы, антонимы, фразы и ассоциации под одной вкладкой, складными подразделами. */
   renderSemantics() {
     const wrap = this.bodyEl.createDiv({ cls: "rr-syns" });
-    const lemmaSuffix = (l) => l ? " \u2192 " + l : "";
-    const wordCount = (groups) => groups.reduce((n, g) => n + g.length, 0);
+    const lemmaSuffix = (l: string | null) => l ? " \u2192 " + l : "";
+    const wordCount = (groups: string[][]) => groups.reduce((n: number, g: string[]) => n + g.length, 0);
     let any = false;
-    const chipSecs = [
+    const chipSecs: [string, string, Synonyms | null][] = [
       ["syn", t("tabSynonyms"), this.synonyms],
       ["ant", t("secAntonyms"), this.antonyms],
       ["hyper", t("secHypernyms"), this.hypernyms],
@@ -1324,7 +1324,7 @@ const RhymesView = class extends ItemView {
           this.chipGroup(b, g);
       });
     }
-    const tailSecs = [
+    const tailSecs: [string, string, Synonyms | null][] = [
       ["meta", t("secMetagrams"), this.metagrams],
       ["ana", t("secAnagrams"), this.anagrams]
     ];
@@ -1350,7 +1350,7 @@ const RhymesView = class extends ItemView {
     }
     const wrap = this.bodyEl.createDiv({ cls: "rr-gen" });
     const controls = wrap.createDiv({ cls: "rr-gen-controls" });
-    const cats = [
+    const cats: [GenCat, string][] = [
       ["n", t("genNoun")],
       ["a", t("genAdj")],
       ["v", t("genVerb")],
@@ -1379,7 +1379,7 @@ const RhymesView = class extends ItemView {
       this.rollGen();
     });
     const tierRow = wrap.createDiv({ cls: "rr-gen-controls rr-gen-tiers" });
-    const tierOpts = [[0, t("lexBase")], [1, t("lexFreq")]];
+    const tierOpts: [number, string][] = [[0, t("lexBase")], [1, t("lexFreq")]];
     for (const [tier, label] of tierOpts) {
       const b = tierRow.createEl("button", { cls: "rr-gen-cat" + (this.genTiers.has(tier) ? " is-active" : ""), text: label });
       b.addEventListener("click", () => {
@@ -1437,7 +1437,7 @@ const RhymesView = class extends ItemView {
     }
     return out;
   }
-  shuffleInPlace(a) {
+  shuffleInPlace<T>(a: T[]) {
     for (let i = a.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [a[i], a[j]] = [a[j], a[i]];

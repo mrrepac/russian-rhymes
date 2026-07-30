@@ -1,6 +1,10 @@
 import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
-import type { App, Debouncer, PluginManifest, SettingDefinitionItem, TAbstractFile, TFolder } from "obsidian";
-import type { LocalDict } from "./dict";
+import type { App, Debouncer, Editor, PluginManifest, Setting, SettingDefinitionItem, SettingGroup, TAbstractFile, TFolder } from "obsidian";
+import type { DictKind, LocalDict } from "./dict";
+import { RhymeDict } from "./dict";
+import { t } from "./i18n";
+import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
+import { convertDsl } from "./dsl";
 
 /** Настройки плагина, как они лежат в data.json. */
 interface RhymesSettings {
@@ -25,10 +29,6 @@ interface RhymesSettings {
   showRare?: boolean;
   pageSize?: number;
 }
-import { RhymeDict } from "./dict";
-import { t } from "./i18n";
-import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
-import { convertDsl } from "./dsl";
 
 const DEFAULT_SETTINGS = {
   doubleCopyMs: 400,
@@ -244,7 +244,7 @@ const RussianRhymesPlugin = class extends Plugin {
     if (data && data.settings) {
       this.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings);
       this.userStress = (_a = data.userStress) != null ? _a : {};
-      this.localDicts = Array.isArray(data.localDicts) ? data.localDicts.map((d) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" })) : [];
+      this.localDicts = Array.isArray(data.localDicts) ? data.localDicts.map((d: LocalDict) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" })) : [];
     } else {
       this.settings = Object.assign({}, DEFAULT_SETTINGS, data != null ? data : {});
     }
@@ -283,10 +283,10 @@ const RussianRhymesPlugin = class extends Plugin {
     await this.saveData(data);
   }
   /** Запомненное пользователем ударение слова. */
-  getUserStress(word) {
+  getUserStress(word: string) {
     return this.userStress[word];
   }
-  setUserStress(word, s) {
+  setUserStress(word: string, s: number | null) {
     if (s === null)
       delete this.userStress[word];
     else
@@ -304,17 +304,17 @@ const RussianRhymesPlugin = class extends Plugin {
       raw = (_b = (_a = activeWindow.getSelection()) == null ? void 0 : _a.toString()) != null ? _b : "";
     return this.extractWord(raw);
   }
-  wordFromEditor(editor) {
+  wordFromEditor(editor: Editor) {
     return this.extractWord(this.rawFromEditor(editor));
   }
-  rawFromEditor(editor) {
+  rawFromEditor(editor: Editor) {
     const sel = editor.getSelection();
     if (sel)
       return sel;
     const range = editor.wordAt(editor.getCursor());
     return range ? editor.getRange(range.from, range.to) : "";
   }
-  extractWord(raw) {
+  extractWord(raw: string) {
     const ws = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
     return ws && ws.length ? ws[ws.length - 1] : null;
   }
@@ -337,7 +337,7 @@ const RussianRhymesPlugin = class extends Plugin {
     return leaf && leaf.view instanceof RhymesView ? leaf.view : null;
   }
   /** Включить/выключить слежение за курсором (кнопка в панели, команда, настройка). */
-  async setFollow(on) {
+  async setFollow(on: boolean) {
     let _a, _b;
     this.settings.followCursor = on;
     await this.saveSettings();
@@ -476,7 +476,7 @@ const RussianRhymesPlugin = class extends Plugin {
     (_a = this.getRhymesView()) == null ? void 0 : _a.refresh();
   }
   /** Вкладка панели всегда существует в правом сайдбаре (урок мобильной версии Songwriter). */
-  async ensureViewInSidebar(reveal) {
+  async ensureViewInSidebar(reveal: boolean) {
     let _a;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_RHYMES);
     let leaf = (_a = existing[0]) != null ? _a : null;
@@ -490,7 +490,7 @@ const RussianRhymesPlugin = class extends Plugin {
       await this.app.workspace.revealLeaf(leaf);
     return leaf;
   }
-  async activateView(word) {
+  async activateView(word: string | null) {
     const leaf = await this.ensureViewInSidebar(true);
     if (!leaf)
       return;
@@ -507,7 +507,7 @@ const RussianRhymesPlugin = class extends Plugin {
    * Скачать словарь с настроенного URL (для мобильного/новой установки, где папки
    * dict/ нет). onProgress — индикатор; возвращает true, если после загрузки словарь готов.
    */
-  async downloadDict(onProgress) {
+  async downloadDict(onProgress?: (done: number, total: number, name: string) => void) {
     try {
       await this.dict.downloadDict(this.settings.dictUrl, onProgress);
       await this.dict.reloadAfterDownload();
@@ -594,16 +594,16 @@ const RhymesSettingTab = class extends PluginSettingTab {
     ];
   }
   /** startupLoad валидируем: data.json правят руками. Остальное читается как есть. */
-  getControlValue(key) {
+  getControlValue(key: string): unknown {
     if (key === "startupLoad")
       return this.plugin.startupMode();
-    return this.plugin.settings[key];
+    return (this.plugin.settings as unknown as Record<string, unknown>)[key];
   }
   /**
    * Базовая реализация только пишет значение в plugin.settings, а половине настроек
    * нужны побочные действия — они и собраны здесь.
    */
-  async setControlValue(key, value) {
+  async setControlValue(key: string, value: unknown) {
     // setFollow сам пишет настройку и сохраняет: поднимает панель, обновляет кнопку, грузит словарь
     if (key === "followCursor") {
       await this.plugin.setFollow(!!value);
@@ -617,8 +617,9 @@ const RhymesSettingTab = class extends PluginSettingTab {
     if (key === "dictUrl")
       v = String(v).trim();
     if (key === "startupLoad")
-      v = STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
-    this.plugin.settings[key] = v;
+      v = typeof v === "string" && STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
+    // настройки адресуются строковым ключом — так устроен декларативный API
+    (this.plugin.settings as unknown as Record<string, unknown>)[key] = v;
     await this.plugin.saveSettings();
     if (key === "hideDictDir")
       this.plugin.applyDictDirStyle();
@@ -627,7 +628,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
       void this.plugin.dict.loadHeavy();
   }
   /** Кнопка скачивания словаря: гасится на время работы, прогресс идёт в Notice. */
-  renderDownload(setting) {
+  renderDownload(setting: Setting) {
     setting.addButton((btn) => {
       btn.setButtonText(t("dlBtn")).setCta();
       btn.onClick(async () => {
@@ -646,7 +647,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * по дороге завелись бы папки «С», «Сл», «Сло»… Ровно поэтому тут не декларативный
    * text — тот пишет значение на каждое изменение.
    */
-  renderFolder(setting, which) {
+  renderFolder(setting: Setting, which: string) {
     const main = which === "main";
     setting.addText((text) => {
       text.setPlaceholder(main ? t("mainFolderHint") : DEFAULT_SETTINGS.localDictDir);
@@ -663,7 +664,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * Сменить папку основного словаря и перетащить туда файлы. Это десятки мегабайт,
    * поэтому с индикатором; по дороге читать словарь нельзя — сбрасываем его после.
    */
-  async changeMainFolder(value) {
+  async changeMainFolder(value: string) {
     const dict = this.plugin.dict;
     const old = dict.activeDictDir;
     dict.setMainDir(value);
@@ -687,7 +688,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     this.plugin.refreshPanel();
   }
   /** Сменить папку личных словарей и перетащить в неё уже импортированные файлы. */
-  async changeDictFolder(value) {
+  async changeDictFolder(value: string) {
     const dict = this.plugin.dict;
     const old = dict.localDir;
     dict.setLocalDir(value);
@@ -711,7 +712,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * в «Синонимы». Это данные пользователя, а не настройки, поэтому декларативной формы
    * тут нет: у строк своё переименование, тумблер, удаление и перетаскивание.
    */
-  dictSection(kind: string, title: string, hint: string): SettingDefinitionItem {
+  dictSection(kind: DictKind, title: string, hint: string): SettingDefinitionItem {
     const dicts = this.plugin.localDicts.filter((d) => (d.kind === "syns" ? "syns" : "defs") === kind);
     return {
       type: "group",
@@ -724,7 +725,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
       ]
     };
   }
-  renderDictSection(setting, group, kind, dicts) {
+  renderDictSection(setting: Setting, group: SettingGroup, kind: DictKind, dicts: LocalDict[]) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });
     const fileInput = label.createEl("input", {
       cls: "rr-file-hidden",
@@ -749,8 +750,8 @@ const RhymesSettingTab = class extends PluginSettingTab {
     return () => listEl.remove();
   }
   /** Список личных словарей: строки с ручкой перетаскивания, именем, счётчиком и удалением. */
-  fillDictList(listEl, dicts) {
-    let dragId = null;
+  fillDictList(listEl: HTMLElement, dicts: LocalDict[]) {
+    let dragId: string | null = null;
     for (const d of dicts) {
       const row = listEl.createDiv({ cls: "rr-dictrow" });
       row.dataset.id = d.id;
@@ -806,7 +807,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
         this.plugin.refreshPanel();
         this.update();
       });
-      row.addEventListener("dragstart", (e) => {
+      row.addEventListener("dragstart", (e: DragEvent) => {
         let _a;
         dragId = d.id;
         row.addClass("is-dragging");
@@ -818,14 +819,14 @@ const RhymesSettingTab = class extends PluginSettingTab {
         row.removeClass("is-dragging");
         row.setAttr("draggable", "false");
       });
-      row.addEventListener("dragover", (e) => {
+      row.addEventListener("dragover", (e: DragEvent) => {
         e.preventDefault();
         if (e.dataTransfer)
           e.dataTransfer.dropEffect = "move";
         row.addClass("is-drop");
       });
       row.addEventListener("dragleave", () => row.removeClass("is-drop"));
-      row.addEventListener("drop", (e) => {
+      row.addEventListener("drop", (e: DragEvent) => {
         let _a;
         e.preventDefault();
         row.removeClass("is-drop");
@@ -838,7 +839,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     }
   }
   /** Переставить словарь fromId на место targetId и сохранить порядок. */
-  async moveDict(fromId, targetId) {
+  async moveDict(fromId: string, targetId: string) {
     const from = this.plugin.localDicts.find((d) => d.id === fromId);
     const to = this.plugin.localDicts.find((d) => d.id === targetId);
     if (!from || !to)
@@ -864,7 +865,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     this.plugin.refreshPanel();
     this.update();
   }
-  async importFiles(files, kind) {
+  async importFiles(files: File[], kind: DictKind) {
     new Notice(t("noticeConverting"));
     await new Promise((r) => window.setTimeout(r, 30));
     let ok = 0;
