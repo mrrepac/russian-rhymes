@@ -12,11 +12,11 @@ An **offline Russian rhyming dictionary** for [Obsidian](https://obsidian.md): r
 - **Meaning tab** — definitions with usage examples and etymology (from Russian Wiktionary), plus a collapsible word-forms table.
 - **Associations tab** — synonyms, antonyms, hypernyms/hyponyms, related words, set phrases, proverbs, associations, metagrams and anagrams, each in a collapsible section.
 - **"By meaning" filter** — highlight or isolate rhymes that are also related in meaning.
-- **Filter by mark** — the word's mood (light · dark · neutral) and its semantic category (person, place, thing, animal… or just "concrete"/"abstract"). Each option carries a count, so you see how many rhymes it keeps before you pick it. Not every word is marked, so only the marks present in the current list are offered.
+- **Filter by category** — the word's mood (light · dark · neutral) and its semantic category (person, place, thing, animal… or just "concrete"/"abstract"). Each option carries a count, so you see how many rhymes it keeps before you pick it. Not every word is marked, so only the marks present in the current list are offered.
 - **Stash** — everything you copied or inserted during the session collects into a folded list under the tabs. One button drops it into the note, one word per line.
 - **Fully offline** — after a one-time dictionary download, everything works with no network.
 - **Light on memory** — the two largest parts of the dictionary (definitions and word forms, ~360 MB of text) are read from disk in compressed blocks instead of being held in RAM: a lookup touches tens of kilobytes and only a ~50 KB index stays resident. You also choose what is preloaded at startup — nothing, rhymes, or rhymes and meanings.
-- **Personal dictionaries** — import your own Lingvo/GoldenDict `.dsl` / `.dsl.dz` files and reorder them.
+- **Personal dictionaries** — import your own Lingvo/GoldenDict `.dsl` / `.dsl.dz` files and reorder them; re-importing the same dictionary updates it instead of adding a second copy.
 - **Works on mobile and desktop.**
 
 ## Usage

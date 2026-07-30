@@ -1069,28 +1069,52 @@ const RhymesSettingTab = class extends PluginSettingTab {
   async importFiles(files: File[], kind: DictKind) {
     new Notice(t("noticeConverting"));
     await new Promise((r) => window.setTimeout(r, 30));
-    let ok = 0;
+    let added = 0;
+    let updated = 0;
     for (const file of files) {
       try {
         const conv = convertDsl(await file.arrayBuffer(), kind === "syns" ? "synonyms" : "definitions");
         if (conv.entries.size === 0)
           continue;
-        const id = "ld" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
         const base = file.name.replace(/\.(dsl\.dz|dsl|dz)$/i, "");
         const name = conv.name && conv.name !== "DSL" ? conv.name : base;
+        const kindKey = kind === "syns" ? "syns" : "defs";
+        /*
+         * Тот же словарь ввозят заново, чтобы обновить его, — значит и надо обновить, а не
+         * завести второй. Раньше id всегда был новым, имена не сравнивались, и повторный
+         * ввоз давал вторую строку и второй файл на диске. Ключ — имя и вид: имя берётся
+         * из заголовка DSL и для одного файла всегда одно, а толковый и синонимический
+         * словари с одним именем — разные вещи, у них и файлы устроены по-разному.
+         * Переименованный в настройках словарь под ключ не попадёт, и это правильно:
+         * имя — то, чем его различает пользователь.
+         */
+        const existing = this.plugin.localDicts.find(
+          (d) => d.name === name && (d.kind === "syns" ? "syns" : "defs") === kindKey
+        );
+        const id = existing ? existing.id : "ld" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
         const words = await this.plugin.dict.importDict(id, name, conv.entries, kind);
-        this.plugin.localDicts.push({ id, name, words, enabled: true, kind: kind === "syns" ? "syns" : "defs" });
+        if (existing) {
+          existing.words = words;
+          // importDict включает словарь; выключенный пользователем таким не поднимаем
+          if (!existing.enabled)
+            this.plugin.dict.setEnabled(id, false);
+          updated++;
+        } else {
+          this.plugin.localDicts.push({ id, name, words, enabled: true, kind: kindKey });
+          added++;
+        }
         this.plugin.syncLocalManifest();
         await this.plugin.saveSettings();
-        ok++;
       } catch (e) {
         console.error("Russian Rhymes: DSL import failed", file.name, e);
       }
     }
-    if (ok === 0) {
+    if (added + updated === 0) {
       new Notice(t("noticeBadDsl"));
       return;
     }
+    if (updated > 0)
+      new Notice(t("noticeDictUpdated") + updated);
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
     this.update();
