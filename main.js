@@ -5063,20 +5063,20 @@ var RhymeDict = class {
     for (const name of HEAVY_SHARDS)
       await this.loadBlockIndex(name);
     const opt = [
-      ["synonyms.txt.gz", (i) => this.syns = i],
-      ["antonyms.txt.gz", (i) => this.ants = i],
-      ["associations.txt.gz", (i) => this.assoc = i],
-      ["hypernyms.txt.gz", (i) => this.hyper = i],
-      ["hyponyms.txt.gz", (i) => this.hypo = i],
-      ["related.txt.gz", (i) => this.related = i],
-      ["idioms.txt.gz", (i) => this.idioms = i],
-      ["proverbs.txt.gz", (i) => this.proverbs = i],
-      ["metagrams.txt.gz", (i) => this.metagrams = i],
-      ["anagrams.txt.gz", (i) => this.anagrams = i],
-      ["lemmas.txt.gz", (i) => this.lemmas = i],
-      ["phrases.txt.gz", (i) => this.phrasesIdx = i]
+      { name: "synonyms.txt.gz", set: (i) => this.syns = i },
+      { name: "antonyms.txt.gz", set: (i) => this.ants = i },
+      { name: "associations.txt.gz", set: (i) => this.assoc = i },
+      { name: "hypernyms.txt.gz", set: (i) => this.hyper = i },
+      { name: "hyponyms.txt.gz", set: (i) => this.hypo = i },
+      { name: "related.txt.gz", set: (i) => this.related = i },
+      { name: "idioms.txt.gz", set: (i) => this.idioms = i },
+      { name: "proverbs.txt.gz", set: (i) => this.proverbs = i },
+      { name: "metagrams.txt.gz", set: (i) => this.metagrams = i },
+      { name: "anagrams.txt.gz", set: (i) => this.anagrams = i },
+      { name: "lemmas.txt.gz", set: (i) => this.lemmas = i },
+      { name: "phrases.txt.gz", set: (i) => this.phrasesIdx = i }
     ];
-    for (const [name, set] of opt) {
+    for (const { name, set } of opt) {
       const raw = await this.readGz(name);
       if (raw !== null)
         set(buildIndex(raw));
@@ -7690,8 +7690,8 @@ var DEFAULT_SETTINGS = {
 var FOLLOW_DELAY_MS = 500;
 var MIN_FOLLOW_LEN = 3;
 var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
-  constructor(...args) {
-    super(...args);
+  constructor(app, manifest) {
+    super(app, manifest);
     this.settings = DEFAULT_SETTINGS;
     this.userStress = {};
     this.localDicts = [];

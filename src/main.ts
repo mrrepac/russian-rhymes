@@ -1,4 +1,5 @@
 import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
+import type { App, PluginManifest, SettingDefinitionItem } from "obsidian";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES } from "./view";
@@ -23,8 +24,8 @@ const DEFAULT_SETTINGS = {
 const FOLLOW_DELAY_MS = 500;
 const MIN_FOLLOW_LEN = 3;
 const RussianRhymesPlugin = class extends Plugin {
-  constructor(...args) {
-    super(...args);
+  constructor(app: App, manifest: PluginManifest) {
+    super(app, manifest);
     this.settings = DEFAULT_SETTINGS;
     this.userStress = {};
     this.localDicts = [];
@@ -490,7 +491,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * по потере фокуса, а списки личных словарей — это не настройки, а данные
    * пользователя со своим переименованием, тумблерами и перетаскиванием.
    */
-  getSettingDefinitions() {
+  getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       {
         name: t("settingDouble"),
@@ -666,7 +667,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * в «Синонимы». Это данные пользователя, а не настройки, поэтому декларативной формы
    * тут нет: у строк своё переименование, тумблер, удаление и перетаскивание.
    */
-  dictSection(kind, title, hint) {
+  dictSection(kind: string, title: string, hint: string): SettingDefinitionItem {
     const dicts = this.plugin.localDicts.filter((d) => (d.kind === "syns" ? "syns" : "defs") === kind);
     return {
       type: "group",
