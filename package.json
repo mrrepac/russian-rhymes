@@ -1,6 +1,6 @@
 {
   "name": "russian-rhymes",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Offline Russian rhyming dictionary for Obsidian",
   "main": "main.js",
   "private": true,

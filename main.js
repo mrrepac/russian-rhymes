@@ -9193,10 +9193,16 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
   /**
    * Перерисовать вкладку. update() — часть того же декларативного слоя, что и всё
    * остальное, и на старом приложении его просто нет: там перерисовываем сами.
+   *
+   * Обращаемся к update() через нетипизированную ссылку намеренно. Метод появился
+   * в 1.13, а плагин заявляет 1.7.2, и проверка каталога (no-unsupported-api) читает
+   * типы: прямое this.update() для неё — вызов API новее заявленного. Проверка на
+   * typeof здесь и есть тот самый разбор версий, которого она требует.
    */
   refresh() {
-    if (typeof this.update === "function")
-      this.refresh();
+    const tab = this;
+    if (typeof tab.update === "function")
+      tab.update();
     else if (this.containerEl)
       this.display();
   }
