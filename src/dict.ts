@@ -243,6 +243,7 @@ const RhymeDict = class {
   rhymeKeyEnd: Uint32Array | null;
   missingShards: string[];
   badShards: Set<string>;
+  inventoryCache: ShardInfo[] | null;
 
   constructor(app: App, pluginDir: string) {
     this.app = app;
@@ -296,6 +297,8 @@ const RhymeDict = class {
     // превращался в пустую вкладку, а причину нельзя было увидеть нигде
     this.missingShards = [];
     this.badShards = /* @__PURE__ */ new Set();
+    // что нашлось на диске в прошлый раз; сбрасывается при закачке, переезде и перезагрузке
+    this.inventoryCache = null;
     this.manifest = [];
     this.localOrder = [];
     this.loading = null;
@@ -523,7 +526,16 @@ const RhymeDict = class {
    * и правильно делает, без пословиц словарь работает, — но тогда единственное место,
    * где видно недостачу, это вот этот список в настройках.
    */
-  async inventory(): Promise<ShardInfo[]> {
+  async inventory(refresh = false): Promise<ShardInfo[]> {
+    /*
+     * Двадцать шардов, до трёх наборов файлов у каждого, на файл — «есть?» и «сколько
+     * весит?»: около полусотни обращений к диску. Панель зовёт инвентарь при каждой
+     * отрисовке, если чего-то не хватает (а не хватает как раз у того, у кого оборвалась
+     * закачка) — то есть на каждое слово, включая слежение за курсором. Список меняется
+     * только от скачивания, переезда папки и перезагрузки словаря — там кэш и сбрасывается.
+     */
+    if (!refresh && this.inventoryCache)
+      return this.inventoryCache;
     if (!this.activeDictDir)
       await this.resolveDictDir();
     const out: ShardInfo[] = [];
@@ -555,7 +567,12 @@ const RhymeDict = class {
       }
       out.push(info);
     }
+    this.inventoryCache = out;
     return out;
+  }
+  /** Забыть, что лежит на диске: файлы скачали, перенесли или перечитали. */
+  invalidateInventory() {
+    this.inventoryCache = null;
   }
   /** Размер файла или null, если файла нет. stat есть не у всякой заглушки — как и getResourcePath. */
   async fileSize(path: string) {
@@ -569,7 +586,7 @@ const RhymeDict = class {
   }
   /** Имена шардов, которых не хватает: считается после загрузки, показывается в настройках. */
   async refreshMissing() {
-    const inv = await this.inventory();
+    const inv = await this.inventory(true);
     this.missingShards = inv.filter((s) => !s.present || s.broken).map((s) => s.name);
     return this.missingShards;
   }
@@ -582,7 +599,6 @@ const RhymeDict = class {
     }
   }
   readGz(name: string) {
-    // файл основного словаря качается заново по кнопке, поэтому битый можно снести
     // Битый шард можно снести — он качается заново по кнопке. Но НЕ когда словарь лежит
     // в хранилище: удаление уедет синхронизацией и убьёт исправную копию на другом
     // устройстве. Там просто сообщаем о поломке и оставляем файл на месте.
@@ -755,6 +771,7 @@ const RhymeDict = class {
       moved++;
     }
     this.activeDictDir = dst;
+    this.invalidateInventory();
     return moved;
   }
   localFilePath(id: string) {
@@ -834,10 +851,15 @@ const RhymeDict = class {
       if (onProgress)
         onProgress(++done, files.length, name);
     };
+    this.invalidateInventory();
     for (const f of files) {
       // .blk.gz — блочный шард, .blkidx.gz — его индекс; без них словарь не доедет до телефона
-      if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-"))
+      if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-")) {
+        // счётчик всё равно двигаем: иначе «12/16» останавливалось, не дойдя до конца,
+        // и закачка выглядела оборванной там, где просто пропустили чужое имя
+        step(f.name);
         continue;
+      }
       const path = normalizePath(`${dir}/${f.name}`);
       if (await adapter.exists(path)) {
         const stat = await adapter.stat(path);
@@ -893,6 +915,7 @@ const RhymeDict = class {
   async reloadAfterDownload() {
     this.status = "idle";
     this.loading = null;
+    this.invalidateInventory();
     // вторую волну тоже перечитать: докачанные formsIdx/defs иначе остались бы пустыми
     this.heavyStatus = "idle";
     this.loadingHeavy = null;
@@ -1449,16 +1472,33 @@ const RhymeDict = class {
         continue;
       out.push({ word: w, s: parseInt(s36, 36), f: +f, p, syl: countSyllables(w), exact: false });
     }
-    const byLemma = /* @__PURE__ */ new Map<string, RhymeEntry>();
+    /*
+     * Дедуп по лемме: группировка идёт по НАЧАЛУ слова, поэтому в блок попадают все формы
+     * одного гнезда (странный/странное/странным) — рифмы этим не страдают, там формы уходят
+     * в разные ключи по концу. Сортируем ДО обращения к леммам: у кластера вроде «пр» в блоке
+     * до тридцати тысяч слов, а показываем две тысячи — незачем искать лемму каждому. Идём
+     * по убыванию частоты и останавливаемся, набрав нужное; в лемматизации это разница
+     * между 30 тысячами двоичных поисков и парой тысяч (68 мс против 5 на «правде»).
+     */
+    out.sort((a, b) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1));
+    const seen = /* @__PURE__ */ new Map<string, number>();
+    const list: RhymeEntry[] = [];
     for (const e of out) {
+      if (list.length >= 2e3)
+        break;
       const lemma = (_a = this.lemmasOf(e.word)[0]) != null ? _a : e.word;
-      const prev = byLemma.get(lemma);
-      if (!prev || e.word === lemma || prev.word !== lemma && e.f > prev.f)
-        byLemma.set(lemma, e);
+      const at = seen.get(lemma);
+      if (at === void 0) {
+        seen.set(lemma, list.length);
+        list.push(e);
+        continue;
+      }
+      // сама лемма — лучший представитель гнезда, чем любая её форма; частота тут уже
+      // не спорит: список отсортирован, и первым пришло самое частотное
+      if (e.word === lemma && list[at].word !== lemma)
+        list[at] = e;
     }
-    const list = [...byLemma.values()];
-    list.sort((a, b) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1));
-    return list.slice(0, 2e3);
+    return list;
   }
   /** Варианты ударения слова или null, если слова нет. */
   lookup(word: string): StressVariant[] | null {

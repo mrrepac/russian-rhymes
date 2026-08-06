@@ -4862,6 +4862,7 @@ var RhymeDict = class {
     this.localBad = /* @__PURE__ */ new Set();
     this.missingShards = [];
     this.badShards = /* @__PURE__ */ new Set();
+    this.inventoryCache = null;
     this.manifest = [];
     this.localOrder = [];
     this.loading = null;
@@ -5069,7 +5070,9 @@ var RhymeDict = class {
    * и правильно делает, без пословиц словарь работает, — но тогда единственное место,
    * где видно недостачу, это вот этот список в настройках.
    */
-  async inventory() {
+  async inventory(refresh = false) {
+    if (!refresh && this.inventoryCache)
+      return this.inventoryCache;
     if (!this.activeDictDir)
       await this.resolveDictDir();
     const out = [];
@@ -5101,7 +5104,12 @@ var RhymeDict = class {
       }
       out.push(info);
     }
+    this.inventoryCache = out;
     return out;
+  }
+  /** Забыть, что лежит на диске: файлы скачали, перенесли или перечитали. */
+  invalidateInventory() {
+    this.inventoryCache = null;
   }
   /** Размер файла или null, если файла нет. stat есть не у всякой заглушки — как и getResourcePath. */
   async fileSize(path) {
@@ -5115,7 +5123,7 @@ var RhymeDict = class {
   }
   /** Имена шардов, которых не хватает: считается после загрузки, показывается в настройках. */
   async refreshMissing() {
-    const inv = await this.inventory();
+    const inv = await this.inventory(true);
     this.missingShards = inv.filter((s) => !s.present || s.broken).map((s) => s.name);
     return this.missingShards;
   }
@@ -5288,6 +5296,7 @@ var RhymeDict = class {
       moved++;
     }
     this.activeDictDir = dst;
+    this.invalidateInventory();
     return moved;
   }
   localFilePath(id) {
@@ -5364,9 +5373,12 @@ var RhymeDict = class {
       if (onProgress)
         onProgress(++done, files.length, name);
     };
+    this.invalidateInventory();
     for (const f of files) {
-      if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-"))
+      if (!/^[\w-]+\.(txt|blk|blkidx)\.gz$/.test(f.name) || f.name.startsWith("local-")) {
+        step(f.name);
         continue;
+      }
       const path = (0, import_obsidian.normalizePath)(`${dir}/${f.name}`);
       if (await adapter.exists(path)) {
         const stat = await adapter.stat(path);
@@ -5419,6 +5431,7 @@ var RhymeDict = class {
   async reloadAfterDownload() {
     this.status = "idle";
     this.loading = null;
+    this.invalidateInventory();
     this.heavyStatus = "idle";
     this.loadingHeavy = null;
     this.formsIdx = null;
@@ -5973,16 +5986,23 @@ var RhymeDict = class {
         continue;
       out.push({ word: w, s: parseInt(s36, 36), f: +f, p, syl: countSyllables(w), exact: false });
     }
-    const byLemma = /* @__PURE__ */ new Map();
+    out.sort((a, b) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1));
+    const seen = /* @__PURE__ */ new Map();
+    const list = [];
     for (const e of out) {
+      if (list.length >= 2e3)
+        break;
       const lemma = (_a = this.lemmasOf(e.word)[0]) != null ? _a : e.word;
-      const prev = byLemma.get(lemma);
-      if (!prev || e.word === lemma || prev.word !== lemma && e.f > prev.f)
-        byLemma.set(lemma, e);
+      const at = seen.get(lemma);
+      if (at === void 0) {
+        seen.set(lemma, list.length);
+        list.push(e);
+        continue;
+      }
+      if (e.word === lemma && list[at].word !== lemma)
+        list[at] = e;
     }
-    const list = [...byLemma.values()];
-    list.sort((a, b) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1));
-    return list.slice(0, 2e3);
+    return list;
   }
   /** Варианты ударения слова или null, если слова нет. */
   lookup(word) {
@@ -6136,6 +6156,9 @@ var en = {
   nearHint: "Near rhymes: same ending, different supporting consonant (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430)",
   consonHint: "Slant rhymes: same vowels, consonants of a similar sound class (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
   assonHint: "Assonance: same stressed vowel and vowel pattern, consonants free",
+  allitHint: "Alliteration: same opening consonant cluster (str\u2011: strana, struna) \u2014 for line openings",
+  kindAllHint: "Everything at once: exact rhymes on top, then near ones, consonance, assonance, alliteration",
+  dragHint: "drag with the mouse \u2014 drop into the note",
   syllables: "syllables",
   clausLabel: "clausula",
   clausM: "masculine",
@@ -6351,6 +6374,9 @@ var ru = {
   nearHint: "\u0411\u043B\u0438\u0437\u043A\u0438\u0435 \u0440\u0438\u0444\u043C\u044B: \u0442\u043E \u0436\u0435 \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0435, \u043D\u043E \u0434\u0440\u0443\u0433\u0430\u044F \u043E\u043F\u043E\u0440\u043D\u0430\u044F \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u0430\u044F (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430)",
   consonHint: "\u0421\u043E\u0437\u0432\u0443\u0447\u0438\u044F: \u0442\u0435 \u0436\u0435 \u0433\u043B\u0430\u0441\u043D\u044B\u0435, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u043F\u043E\u0445\u043E\u0436\u0435\u0433\u043E \u043A\u043B\u0430\u0441\u0441\u0430 \u0437\u0432\u0443\u0447\u0430\u043D\u0438\u044F (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
   assonHint: "\u0410\u0441\u0441\u043E\u043D\u0430\u043D\u0441: \u0442\u0430 \u0436\u0435 \u0443\u0434\u0430\u0440\u043D\u0430\u044F \u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438 \u0440\u0438\u0441\u0443\u043D\u043E\u043A \u0433\u043B\u0430\u0441\u043D\u044B\u0445, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u0441\u0432\u043E\u0431\u043E\u0434\u043D\u044B",
+  allitHint: "\u0410\u043B\u043B\u0438\u0442\u0435\u0440\u0430\u0446\u0438\u044F: \u0442\u043E\u0442 \u0436\u0435 \u043D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0439 \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0439 \u043A\u043B\u0430\u0441\u0442\u0435\u0440 (\u0441\u0442\u0440- \u2192 \u0441\u0442\u0440\u0430\u043D\u0430, \u0441\u0442\u0440\u0443\u043D\u0430) \u2014 \u0434\u043B\u044F \u0437\u0430\u0447\u0438\u043D\u043E\u0432 \u0441\u0442\u0440\u043E\u043A",
+  kindAllHint: "\u0412\u0441\u0451 \u0441\u0440\u0430\u0437\u0443: \u0441\u0432\u0435\u0440\u0445\u0443 \u0442\u043E\u0447\u043D\u044B\u0435 \u0440\u0438\u0444\u043C\u044B, \u0437\u0430\u0442\u0435\u043C \u0431\u043B\u0438\u0437\u043A\u0438\u0435, \u0441\u043E\u0437\u0432\u0443\u0447\u0438\u044F, \u0430\u0441\u0441\u043E\u043D\u0430\u043D\u0441\u044B, \u0430\u043B\u043B\u0438\u0442\u0435\u0440\u0430\u0446\u0438\u044F",
+  dragHint: "\u043F\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u043C\u044B\u0448\u044C\u044E \u2014 \u0441\u043B\u043E\u0432\u043E \u043B\u044F\u0436\u0435\u0442 \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0443",
   syllables: "\u0441\u043B\u043E\u0433\u0438",
   clausLabel: "\u043A\u043B\u0430\u0443\u0437\u0443\u043B\u0430",
   clausM: "\u043C\u0443\u0436\u0441\u043A\u0430\u044F",
@@ -6576,8 +6602,22 @@ var STARTUP_KEYS = ["none", "rhymes", "full"];
 var STASH_MAX = 60;
 var LONG_PRESS_MS = 500;
 var LONG_PRESS_SLOP = 10;
+var COPY_NOTICE_MS = 600;
 var insertHint = () => t(import_obsidian3.Platform.isMobile ? "insertHintTouch" : "insertHint");
+var dragHint = () => import_obsidian3.Platform.isMobile ? "" : " \xB7 " + t("dragHint");
+var KIND_HINT = () => ({
+  all: t("kindAllHint"),
+  exact: t("rhymesHint"),
+  near: t("nearHint"),
+  conson: t("consonHint"),
+  asson: t("assonHint"),
+  allit: t("allitHint")
+});
 var displayCmp = (a, b) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
+function optLabel(opts, value) {
+  const hit = opts.find(([v]) => v === value);
+  return hit ? hit[1] : t("filterAll");
+}
 var RhymesView = class extends import_obsidian3.ItemView {
   // отложенные таймеры клика (копия) и долгого нажатия (вставка) — гасим при закрытии/перерисовке
   constructor(leaf, plugin) {
@@ -6637,6 +6677,12 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.genBagKey = "";
     this.resultsHost = null;
     this.copyTimers = /* @__PURE__ */ new Set();
+    this.loadSeq = 0;
+    this.soundEpoch = 0;
+    this.soundCacheKey = "";
+    this.soundCacheList = null;
+    this.lastCopied = "";
+    this.lastCopiedAt = 0;
     this.plugin = plugin;
     this.loadFilters();
     this.shown = PAGE;
@@ -6755,10 +6801,13 @@ var RhymesView = class extends import_obsidian3.ItemView {
       this.plugin.genUnlocked = true;
     this.soundKind = this.soundKindPref;
     this.shown = PAGE;
+    const seq = ++this.loadSeq;
     const dict = this.plugin.dict;
     if (dict.status !== "ready") {
       this.renderStatus(t("dictLoading"));
       await dict.load();
+      if (seq !== this.loadSeq)
+        return;
       this.plugin.warnBadDicts();
       this.plugin.warnMissingShards();
     }
@@ -6795,8 +6844,12 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.associations = dict.associationsFor(this.word);
     this.metagrams = dict.metagramsFor(this.word);
     this.anagrams = dict.anagramsFor(this.word);
-    this.definitions = await dict.definitionsFor(this.word);
-    this.forms = await dict.formsFor(this.word);
+    const defs = await dict.definitionsFor(this.word);
+    const forms = await dict.formsFor(this.word);
+    if (seq !== this.loadSeq)
+      return;
+    this.definitions = defs;
+    this.forms = forms;
     this.phrases = dict.phrasesFor(this.word);
     this.idioms = dict.idiomsFor(this.word);
     this.proverbs = dict.proverbsFor(this.word);
@@ -6815,6 +6868,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   loadRhymes() {
     this.sectionShown = {};
+    this.soundEpoch++;
     this.allitAll = this.plugin.dict.alliterationsFor(this.word);
     if (this.stress === null) {
       this.all = [];
@@ -6886,21 +6940,35 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (!tabs.includes(this.tab))
       this.tab = (_a = tabs[0]) != null ? _a : "rhymes";
   }
-  /** Виды созвучий, у которых есть данные, — для пилюль-переключателей внутри «Рифм». */
+  /** Виды созвучий, у которых есть данные, — для меню «качество» внутри «Рифм». */
   availableKinds() {
     const kinds = [];
     if (this.all.some((e) => e.exact))
-      kinds.push(["exact", t("kindExact"), t("rhymesHint")]);
+      kinds.push(["exact", t("kindExact")]);
     if (this.all.some((e) => !e.exact))
-      kinds.push(["near", t("tabNear"), t("nearHint")]);
+      kinds.push(["near", t("tabNear")]);
     if (this.consAll.length > 0)
-      kinds.push(["conson", t("tabConson"), t("consonHint")]);
+      kinds.push(["conson", t("tabConson")]);
     if (this.assonAll.length > 0)
-      kinds.push(["asson", t("tabAsson"), t("assonHint")]);
+      kinds.push(["asson", t("tabAsson")]);
     return kinds;
   }
-  /** Список для текущего вида: конкретный вид или «все» — объединение без повторов, сильные сверху. */
+  /**
+   * Список для текущего вида: конкретный вид или «все» — объединение без повторов,
+   * сильные сверху. Результат держим до смены слова, ударения или вида: за одну отрисовку
+   * список спрашивают четыре раза, и в виде «все» это была бы четырёхкратная склейка
+   * тысяч слов. Возвращённый массив только читают — сортируют уже копию (см. filtered).
+   */
   soundList() {
+    const ck = `${this.soundEpoch}:${this.soundKind}`;
+    if (this.soundCacheKey === ck && this.soundCacheList)
+      return this.soundCacheList;
+    const list = this.buildSoundList();
+    this.soundCacheKey = ck;
+    this.soundCacheList = list;
+    return list;
+  }
+  buildSoundList() {
     switch (this.soundKind) {
       case "exact":
         return this.all.filter((e) => e.exact);
@@ -7164,11 +7232,15 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   renderStatus(msg) {
     this.bodyEl.empty();
+    this.resultsHost = null;
+    this.stashHost = null;
     this.bodyEl.createDiv({ cls: "rr-status", text: msg });
   }
   /** Экран «нет словаря»: пояснение + кнопка скачивания с прогрессом (мобильный/новая установка). */
   renderMissing() {
     this.bodyEl.empty();
+    this.resultsHost = null;
+    this.stashHost = null;
     const box = this.bodyEl.createDiv({ cls: "rr-missing" });
     box.createDiv({ cls: "rr-status", text: t("dictMissing") });
     const btn = box.createEl("button", { cls: "rr-add-btn", text: t("dlDict") });
@@ -7213,7 +7285,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const listEl = box.createDiv({ cls: "rr-stash" });
     for (const w of this.stash) {
       const chip = listEl.createSpan({ cls: "rr-chip rr-stash-chip", text: w });
-      chip.title = t("stashRemoveHint");
+      chip.title = t("stashRemoveHint") + dragHint();
+      this.attachDrag(chip, w, false);
       chip.addEventListener("click", () => this.stashRemove(w));
     }
     const row = box.createDiv({ cls: "rr-stash-actions" });
@@ -7305,8 +7378,14 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
   copyWord(w) {
+    const again = w === this.lastCopied && Date.now() - this.lastCopiedAt < COPY_NOTICE_MS;
+    this.lastCopied = w;
+    this.lastCopiedAt = Date.now();
     void this.writeClipboard(w).then((ok) => {
-      new import_obsidian3.Notice(ok ? t("copied") + w : t("copyFail"));
+      if (!ok)
+        new import_obsidian3.Notice(t("copyFail"));
+      else if (!again)
+        new import_obsidian3.Notice(t("copied") + w);
       if (ok)
         this.stashAdd(w);
     });
@@ -7410,9 +7489,32 @@ var RhymesView = class extends import_obsidian3.ItemView {
     });
     return state;
   }
+  /**
+   * Перетаскивание слова в заметку. Ничего своего тут не нужно: редактор Obsidian —
+   * обычный приёмник html5-перетаскивания и вставляет text/plain ровно в ту точку, куда
+   * бросили. Поэтому мышью слово можно положить в середину строки, чего не умеют ни
+   * копия, ни Alt+клик (тот подменяет слово под курсором).
+   * remember — заносить ли слово в копилку по успешному броску; у самой копилки не надо.
+   */
+  attachDrag(el, text, remember = true) {
+    el.setAttr("draggable", "true");
+    el.addEventListener("dragstart", (e) => {
+      if (!e.dataTransfer)
+        return;
+      e.dataTransfer.setData("text/plain", text);
+      e.dataTransfer.effectAllowed = "copy";
+      el.addClass("is-dragging");
+    });
+    el.addEventListener("dragend", (e) => {
+      el.removeClass("is-dragging");
+      if (remember && e.dataTransfer && e.dataTransfer.dropEffect !== "none")
+        this.stashAdd(text);
+    });
+  }
   /** Клик — копировать, Alt+клик или долгое нажатие — вставить в заметку (без поиска по двойному клику). */
   attachCopyInsert(el, text) {
     const lp = this.attachLongPressInsert(el, text);
+    this.attachDrag(el, text);
     el.addEventListener("click", (e) => {
       if (lp.fired) {
         lp.fired = false;
@@ -7424,42 +7526,26 @@ var RhymesView = class extends import_obsidian3.ItemView {
         this.copyWord(text);
     });
   }
-  /** Клик — копировать, двойной клик — искать рифмы к этому слову. Таймер, чтобы двойной не копировал. */
+  /**
+   * Клик — копировать, двойной клик — искать рифмы к этому слову. Копия срабатывает
+   * сразу: раньше она ждала 200 мс, чтобы двойной клик не копировал, и эта задержка
+   * висела на каждом взятом слове. Двойной клик теперь просто копирует то слово, в
+   * которое проваливается, — второе уведомление гасит copyWord.
+   */
   attachWordActions(el, word) {
     const lp = this.attachLongPressInsert(el, word);
-    let timer = null;
-    const cancel = () => {
-      if (timer !== null) {
-        this.containerEl.win.clearTimeout(timer);
-        this.copyTimers.delete(timer);
-        timer = null;
-      }
-    };
+    this.attachDrag(el, word);
     el.addEventListener("click", (e) => {
       if (lp.fired) {
         lp.fired = false;
-        cancel();
         return;
       }
-      if (e.altKey) {
-        cancel();
+      if (e.altKey)
         this.insertWord(word);
-        return;
-      }
-      if (timer !== null)
-        return;
-      timer = this.containerEl.win.setTimeout(() => {
-        if (timer !== null)
-          this.copyTimers.delete(timer);
-        timer = null;
+      else
         this.copyWord(word);
-      }, 200);
-      this.copyTimers.add(timer);
     });
-    el.addEventListener("dblclick", () => {
-      cancel();
-      void this.showWord(word);
-    });
+    el.addEventListener("dblclick", () => void this.showWord(word));
   }
   /** Погасить отложенные таймеры копирования (при закрытии панели или перерисовке). */
   cancelCopyTimers() {
@@ -7611,7 +7697,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Пилюли строгости + фильтры + список рифм. Зовётся заново при любом клике по фильтру. */
   renderSoundResults() {
-    let _a, _b, _c, _d, _e, _f;
+    let _a, _b;
     const host = this.resultsHost;
     if (!host)
       return;
@@ -7627,9 +7713,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     const clausVaries = this.clausSpread();
     this.clausOn = clausVaries ? this.clausFilter : 0;
+    const L = this.chipLabels();
     const moodCounts = this.traitCounts(this.moodMap, MOOD_KEYS);
     const semCounts = this.traitCounts(this.semMap, SEM_KEYS);
-    const moodOpts = MOOD_KEYS.filter((k) => moodCounts.has(k)).map((k) => [k, `${MOOD_LABEL()[k]} (${moodCounts.get(k)})`]);
+    const moodOpts = MOOD_KEYS.filter((k) => moodCounts.has(k)).map((k) => [k, `${L.mood[k]} (${moodCounts.get(k)})`]);
     let concrete = 0;
     let abstract = 0;
     for (const [code, n] of semCounts) {
@@ -7645,18 +7732,18 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     for (const k of SEM_KEYS) {
       if (semCounts.has(k))
-        semOpts.push([k, `${SEM_LABEL()[k]} (${semCounts.get(k)})`]);
+        semOpts.push([k, `${L.sem[k]} (${semCounts.get(k)})`]);
     }
     this.moodOn = moodOpts.some(([k]) => k === this.moodFilter) ? this.moodFilter : "";
     this.semOn = semOpts.some(([k]) => k === this.semFilter) ? this.semFilter : "";
-    const posLabel = POS_LABEL();
+    const posLabel = L.pos;
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
     if (kinds.length >= 2 || this.allitAll.length > 0) {
-      const kindOpts = [["all", t("kindAll")], ...kinds.map(([k, l]) => [k, l])];
+      const kindOpts = [["all", t("kindAll")], ...kinds];
       if (this.allitAll.length > 0)
         kindOpts.push(["allit", t("kindAllit")]);
-      this.filterMenu(
+      const kindBtn = this.filterMenu(
         bar,
         t("kindLabel"),
         (_b = (_a = kindOpts.find(([k]) => k === this.soundKind)) == null ? void 0 : _a[1]) != null ? _b : t("kindAll"),
@@ -7674,12 +7761,13 @@ var RhymesView = class extends import_obsidian3.ItemView {
           }
         }
       );
+      kindBtn.title = KIND_HINT()[this.soundKind] || "";
     }
     const sylOpts = [[0, t("filterAll")], [1, "1"], [2, "2"], [3, "3"], [4, "4+"]];
     this.filterMenu(
       bar,
       t("syllables"),
-      (_d = (_c = sylOpts.find(([v]) => v === this.sylFilter)) == null ? void 0 : _c[1]) != null ? _d : t("filterAll"),
+      optLabel(sylOpts, this.sylFilter),
       this.sylFilter !== 0,
       (menu) => {
         for (const [val, label] of sylOpts) {
@@ -7721,11 +7809,22 @@ var RhymesView = class extends import_obsidian3.ItemView {
         }
       );
     }
-    const posOpts = [["", t("filterAll")], ["n", t("posN")], ["v", t("posV")], ["a", t("posA")], ["d", t("posD")], ["i", t("posI")]];
+    const posCounts = /* @__PURE__ */ new Map();
+    for (const e of this.soundList())
+      posCounts.set(e.p, (posCounts.get(e.p) || 0) + 1);
+    const posOpts = [["", t("filterAll")]];
+    for (const k of POS_KEYS) {
+      if (!k || !posLabel[k])
+        continue;
+      if (posCounts.has(k))
+        posOpts.push([k, `${posLabel[k]} (${posCounts.get(k)})`]);
+      else if (k === this.posFilter)
+        posOpts.push([k, `${posLabel[k]} (0)`]);
+    }
     this.filterMenu(
       bar,
       t("filterPos"),
-      (_f = (_e = posOpts.find(([v]) => v === this.posFilter)) == null ? void 0 : _e[1]) != null ? _f : t("filterAll"),
+      optLabel(posOpts, this.posFilter),
       this.posFilter !== "",
       (menu) => {
         for (const [val, label] of posOpts) {
@@ -7742,7 +7841,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (moodOpts.length > 0 || semOpts.length > 0) {
       const on = [];
       if (this.moodOn)
-        on.push(MOOD_LABEL()[this.moodOn]);
+        on.push(L.mood[this.moodOn]);
       if (this.semOn)
         on.push(this.semFilterLabel(this.semOn));
       const traitBtn = this.filterMenu(bar, t("traitLabel"), on.length > 0 ? on.join(", ") : t("filterAll"), on.length > 0, (menu) => {
@@ -7762,12 +7861,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       });
       traitBtn.title = t("traitHint");
     }
-    const lexOpts = [
-      [0, t("lexBase")],
-      [1, t("lexFreq")],
-      [2, t("lexCommon")],
-      [3, t("lexRare")]
-    ];
+    const lexOpts = L.lex.map((label, idx) => [idx, label]);
     const lexOn = lexOpts.filter(([idx]) => this.plugin.settings.lexShow[idx]);
     this.filterMenu(
       bar,
@@ -7805,9 +7899,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
       });
     }
     bar.createSpan({ cls: "rr-count", text: `${list.length}${t("rhymesCount")}` });
-    const lexLabel = [t("lexBase"), t("lexFreq"), t("lexCommon"), t("lexRare")];
     if (this.soundKind === "all" && kinds.length + (this.allitAll.length > 0 ? 1 : 0) >= 2) {
-      this.renderKindSections(host, posLabel, lexLabel);
+      this.renderKindSections(host, L);
       return;
     }
     const listEl = host.createDiv({ cls: "rr-list" });
@@ -7816,7 +7909,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       return;
     }
     for (const e of list.slice(0, this.shown))
-      this.renderChip(listEl, e, posLabel, lexLabel);
+      this.renderChip(listEl, e, L);
     if (list.length > this.shown) {
       const more = host.createEl("button", { cls: "rr-more", text: `${t("showMore")} (${list.length - this.shown})` });
       more.addEventListener("click", () => {
@@ -7825,18 +7918,32 @@ var RhymesView = class extends import_obsidian3.ItemView {
       });
     }
   }
+  /**
+   * Подписи, общие для всех чипов одной отрисовки. Строятся один раз: каждая такая
+   * таблица — это 3–12 обращений к moment.locale() внутри t(), а чипов на экране сотни.
+   */
+  chipLabels() {
+    return {
+      pos: POS_LABEL(),
+      lex: [t("lexBase"), t("lexFreq"), t("lexCommon"), t("lexRare")],
+      mood: MOOD_LABEL(),
+      sem: SEM_LABEL(),
+      hint: `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`,
+      related: t("relatedHint")
+    };
+  }
   /** Один чип-слово: клик — копия, двойной — рифмы к нему; класс по лексическому слою. */
-  renderChip(container, e, posLabel, lexLabel) {
+  renderChip(container, e, L) {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
     const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
-    const mood = this.moodMap.get(e.word);
-    const sem = this.semMap.get(e.word);
-    chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}${mood ? " \xB7 " + MOOD_LABEL()[mood] : ""}${sem ? " \xB7 " + SEM_LABEL()[sem] : ""}${related ? " \xB7 " + t("relatedHint") : ""}`;
+    const mood = L.mood[this.moodMap.get(e.word) || ""];
+    const sem = L.sem[this.semMap.get(e.word) || ""];
+    chip.title = `${L.hint}${L.pos[e.p] ? " \xB7 " + L.pos[e.p] : ""} \xB7 ${L.lex[lc]}${mood ? " \xB7 " + mood : ""}${sem ? " \xB7 " + sem : ""}${related ? " \xB7 " + L.related : ""}`;
     this.attachWordActions(chip, e.word);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
-  renderKindSections(host, posLabel, lexLabel) {
+  renderKindSections(host, L) {
     const src = [
       ["exact", t("kindExact"), this.all.filter((e) => e.exact)],
       ["near", t("tabNear"), this.all.filter((e) => !e.exact)],
@@ -7860,11 +7967,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     for (const [kind, label, list] of toRender) {
       const def = kind === "exact" || kind === "near" || kind === firstKind;
-      this.renderKindSection(host, kind, label, list, def, posLabel, lexLabel);
+      this.renderKindSection(host, kind, label, list, def, L);
     }
   }
   /** Одна сворачиваемая секция вида: заголовок со счётчиком; чипы рисуются лениво при раскрытии. */
-  renderKindSection(host, kind, label, list, defaultOpen, posLabel, lexLabel) {
+  renderKindSection(host, kind, label, list, defaultOpen, L) {
     let _a;
     const details = host.createEl("details", { cls: "rr-ksec" });
     details.open = (_a = this.sectionOpen[kind]) != null ? _a : defaultOpen;
@@ -7877,7 +7984,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       body.empty();
       const shown = (_a2 = this.sectionShown[kind]) != null ? _a2 : PAGE;
       for (const e of list.slice(0, shown))
-        this.renderChip(body, e, posLabel, lexLabel);
+        this.renderChip(body, e, L);
       if (list.length > shown) {
         const more = body.createEl("button", { cls: "rr-more", text: `${t("showMore")} (${list.length - shown})` });
         more.addEventListener("click", () => {
@@ -7919,11 +8026,12 @@ var RhymesView = class extends import_obsidian3.ItemView {
       text: t("formsTitle") + (f.lemma ? " \u2192 " + f.lemma : "")
     });
     const grid = details.createDiv({ cls: "rr-forms-grid" });
+    const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
     for (const r of f.rows) {
       const row = grid.createDiv({ cls: "rr-form-row" });
       row.createSpan({ cls: "rr-form-label", text: r.label });
       const val = row.createSpan({ cls: "rr-form-val", text: r.form });
-      val.title = `${t("copyHint")} \xB7 ${insertHint()}`;
+      val.title = hint;
       this.attachCopyInsert(val, stripStress(r.form));
     }
   }
@@ -8004,9 +8112,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   chipGroup(wrap, words) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`;
     for (const w of words) {
       const chip = row.createSpan({ cls: "rr-chip", text: w });
-      chip.title = `${t("chipHint")} \xB7 ${insertHint()}`;
+      chip.title = hint;
       this.attachWordActions(chip, w);
     }
   }
@@ -8056,10 +8165,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (ph && ph.items.length > 0) {
       any = true;
       this.semSection(wrap, "phrases", t("tabPhrases") + lemmaSuffix(ph.lemma), ph.items.length, (b) => {
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
         for (const it of ph.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it.phrase });
-          pt.title = `${t("copyHint")} \xB7 ${insertHint()}`;
+          pt.title = hint;
           this.attachCopyInsert(pt, it.phrase);
           if (it.gloss)
             prow.createSpan({ cls: "rr-phrase-gloss", text: " \u2014 " + it.gloss });
@@ -8071,10 +8181,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (prov && prov.items.length > 0) {
       any = true;
       this.semSection(wrap, "prov", t("secProverbs") + lemmaSuffix(prov.lemma), prov.items.length, (b) => {
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
         for (const it of prov.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it });
-          pt.title = `${t("copyHint")} \xB7 ${insertHint()}`;
+          pt.title = hint;
           this.attachCopyInsert(pt, it);
         }
         b.createDiv({ cls: "rr-def-src", text: t("defSource") });
@@ -8581,7 +8692,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       },
       { capture: true }
     );
-    this.registerDomEvent(window, "blur", () => {
+    this.registerDomEvent(activeWindow, "blur", () => {
       this.navArmed = false;
     });
     this.addSettingTab(new RhymesSettingTab(this.app, this));
@@ -8614,17 +8725,14 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   async loadSettings() {
     let _a;
     const data = await this.loadData();
-    if (data && data.settings) {
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings);
-      this.userStress = (_a = data.userStress) != null ? _a : {};
-      this.localDicts = Array.isArray(data.localDicts) ? data.localDicts.map((d) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" })) : [];
-    } else {
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, data != null ? data : {});
-    }
-    const legacy = this.settings.showRare;
-    if (!Array.isArray(this.settings.lexShow) || this.settings.lexShow.length !== 4) {
-      this.settings.lexShow = [true, true, true, legacy === true];
-    }
+    this.userStress = data && typeof data.userStress === "object" && data.userStress !== null ? data.userStress : {};
+    this.localDicts = data && Array.isArray(data.localDicts) ? data.localDicts.map((d) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" })) : [];
+    const stored = (_a = data == null ? void 0 : data.settings) != null ? _a : {};
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+    if (!Array.isArray(stored.lexShow) || stored.lexShow.length !== 4)
+      this.settings.lexShow = [true, true, true, this.settings.showRare === true];
+    else
+      this.settings.lexShow = stored.lexShow.slice();
     delete this.settings.showRare;
     delete this.settings.pageSize;
     delete this.settings.genUnlocked;
@@ -8794,6 +8902,11 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     const dirs = this.settings.hideDictDir ? [this.dict.localDir, this.dict.mainDir].filter((d, i, a) => d && a.indexOf(d) === i) : [];
     this.hiddenDirs = dirs.map((d) => d.toLowerCase());
     this.markHiddenDirs();
+    if (this.hiddenDirs.length === 0 && this.dirObserver) {
+      this.dirObserver.disconnect();
+      this.dirObserver = null;
+      return;
+    }
     this.watchFileExplorer();
   }
   /** Поставить класс на строки проводника, отвечающие спрятанным папкам, и снять со всех прочих. */
@@ -8932,13 +9045,15 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
   }
   /**
    * Настройки объявлены декларативно (Obsidian 1.13+): приложение рисует их само и,
-   * главное, находит поиском по настройкам. display() здесь больше нет — при непустом
-   * getSettingDefinitions() Obsidian его и не вызывает, а с 1.13 он ещё и устаревший.
+   * главное, находит поиском по настройкам.
    *
    * Императивными (через render) остались только те строки, которым декларативной формы
    * не хватает: кнопка скачивания гасит себя на время работы, поля папок применяются
    * по потере фокуса, а списки личных словарей — это не настройки, а данные
    * пользователя со своим переименованием, тумблерами и перетаскиванием.
+   *
+   * Ниже есть и display(): весь декларативный слой появился в 1.13, и приложение
+   * постарше о нём не знает — вкладка настроек открывалась пустой. См. display().
    */
   getSettingDefinitions() {
     return [
@@ -8980,8 +9095,8 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
           },
           { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
           { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") },
-          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) },
-          { name: t("stressTitle"), desc: t("stressDesc"), render: (setting, group) => this.renderStresses(setting, group) }
+          { name: t("invFiles"), desc: t("invDesc"), render: (setting) => this.renderInventory(setting) },
+          { name: t("stressTitle"), desc: t("stressDesc"), render: (setting) => this.renderStresses(setting) }
         ]
       },
       {
@@ -8999,6 +9114,91 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       this.dictSection("defs", t("locDefs"), t("locReorderHint")),
       this.dictSection("syns", t("locSyns"), t("locSynsHint"))
     ];
+  }
+  /**
+   * Запасная отрисовка вкладки настроек — для приложения, которое не знает про
+   * декларативные настройки: весь этот слой (getSettingDefinitions/getControlValue/
+   * setControlValue/update) появился только в Obsidian 1.13. На 1.13+ приложение при
+   * непустом getSettingDefinitions() display() не вызывает вовсе, поэтому здесь ничего
+   * не дублируется; а на устройстве, отставшем по версии, это единственный способ
+   * увидеть настройки — иначе вкладка открывалась пустой, и ни папку словаря задать,
+   * ни личный словарь подключить было нельзя. Список строк один и тот же, так что
+   * расходиться двум формам не с чего.
+   */
+  display() {
+    const host = this.containerEl;
+    host.empty();
+    for (const item of this.getSettingDefinitions())
+      this.renderLegacyItem(host, item);
+  }
+  /** Одна строка (или группа строк) старым способом — через Setting. */
+  renderLegacyItem(host, item) {
+    const group = item;
+    if (group.type === "group" || group.type === "list") {
+      if (group.heading)
+        new import_obsidian4.Setting(host).setName(group.heading).setHeading();
+      for (const sub of group.items || [])
+        this.renderLegacyItem(host, sub);
+      return;
+    }
+    const def = item;
+    const setting = new import_obsidian4.Setting(host);
+    setting.setName(def.name);
+    if (def.desc)
+      setting.setDesc(def.desc);
+    if (def.render) {
+      def.render(setting, null);
+      return;
+    }
+    if (def.control)
+      this.renderLegacyControl(setting, def.control);
+  }
+  /**
+   * Поле ввода старым способом. Поддержаны ровно те виды, которые плагин объявляет
+   * (переключатель, число, строка, выпадающий список) — заводить остальные незачем,
+   * их некому показать.
+   */
+  renderLegacyControl(setting, control) {
+    const key = control.key;
+    const value = this.getControlValue(key);
+    if (control.type === "toggle") {
+      setting.addToggle((c) => c.setValue(value === true).onChange((v) => void this.setControlValue(key, v)));
+      return;
+    }
+    if (control.type === "dropdown") {
+      setting.addDropdown((c) => {
+        c.addOptions(control.options);
+        c.setValue(String(value != null ? value : ""));
+        c.onChange((v) => void this.setControlValue(key, v));
+      });
+      return;
+    }
+    if (control.type === "number") {
+      setting.addText((c) => {
+        c.inputEl.type = "number";
+        if (control.placeholder)
+          c.setPlaceholder(control.placeholder);
+        c.setValue(value == null ? "" : String(value));
+        c.inputEl.addEventListener("change", () => void this.setControlValue(key, Number(c.getValue())));
+      });
+      return;
+    }
+    if (control.type === "text") {
+      setting.addText((c) => {
+        c.setValue(typeof value === "string" ? value : "");
+        c.inputEl.addEventListener("change", () => void this.setControlValue(key, c.getValue()));
+      });
+    }
+  }
+  /**
+   * Перерисовать вкладку. update() — часть того же декларативного слоя, что и всё
+   * остальное, и на старом приложении его просто нет: там перерисовываем сами.
+   */
+  refresh() {
+    if (typeof this.update === "function")
+      this.refresh();
+    else if (this.containerEl)
+      this.display();
   }
   /** startupLoad валидируем: data.json правят руками. Остальное читается как есть. */
   getControlValue(key) {
@@ -9046,7 +9246,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
           new import_obsidian4.Notice(res.ok ? t("dlDone") : t("dlFailed"));
         btn.setDisabled(false);
         this.plugin.refreshPanel();
-        this.update();
+        this.refresh();
       });
     });
   }
@@ -9113,7 +9313,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       console.error("Russian Rhymes: moving personal dictionaries failed", e);
       new import_obsidian4.Notice(t("locMoveFail"));
     }
-    this.update();
+    this.refresh();
   }
   /**
    * Секция личных словарей одного вида: толковые идут в «Значение», синонимические —
@@ -9128,7 +9328,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
         {
           name: title,
           desc: dicts.length ? hint : t("locEmpty"),
-          render: (setting, group) => this.renderDictSection(setting, group, kind, dicts)
+          render: (setting) => this.renderDictSection(setting, kind, dicts)
         }
       ]
     };
@@ -9151,18 +9351,18 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
    * видно оборванную закачку — до этого недостающий шард просто оборачивался пустой
    * вкладкой. Читается с диска, поэтому список заполняется после ответа, а не сразу.
    */
-  renderInventory(setting, group) {
+  renderInventory(setting) {
     const listEl = this.wideHost(setting).createDiv({ cls: "rr-shards" });
     listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
-    const fill = () => {
-      void this.plugin.dict.inventory().then((inv) => {
+    const fill = (refresh = false) => {
+      void this.plugin.dict.inventory(refresh).then((inv) => {
         listEl.empty();
         renderShardList(listEl, inv, true);
       });
     };
     setting.addExtraButton((btn) => {
       btn.setIcon("refresh-cw").setTooltip(t("invRefresh"));
-      btn.onClick(() => fill());
+      btn.onClick(() => fill(true));
     });
     fill();
     return () => listEl.remove();
@@ -9173,7 +9373,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
    * это можно было только повторным кликом по правильной гласной, если вспомнить, где.
    * Здесь их видно списком, каждое снимается по клику.
    */
-  renderStresses(setting, group) {
+  renderStresses(setting) {
     const listEl = this.wideHost(setting).createDiv({ cls: "rr-stresses" });
     const fill = () => {
       listEl.empty();
@@ -9206,7 +9406,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     fill();
     return () => listEl.remove();
   }
-  renderDictSection(setting, group, kind, dicts) {
+  renderDictSection(setting, kind, dicts) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });
     const fileInput = label.createEl("input", {
       cls: "rr-file-hidden",
@@ -9310,7 +9510,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     this.plugin.syncLocalManifest();
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.update();
+    this.refresh();
   }
   /** Переставить словарь fromId на место targetId и сохранить порядок. */
   async moveDict(fromId, targetId) {
@@ -9335,11 +9535,11 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
     this.plugin.syncLocalManifest();
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.update();
+    this.refresh();
   }
   async importFiles(files, kind) {
     new import_obsidian4.Notice(t("noticeConverting"));
-    await new Promise((r) => window.setTimeout(r, 30));
+    await new Promise((r) => activeWindow.setTimeout(r, 30));
     let added = 0;
     let updated = 0;
     for (const file of files) {
@@ -9378,7 +9578,7 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       new import_obsidian4.Notice(t("noticeDictUpdated") + updated);
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.update();
+    this.refresh();
   }
 };
 var main_default = RussianRhymesPlugin;

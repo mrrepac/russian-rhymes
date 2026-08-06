@@ -1,5 +1,6 @@
 data.json
 dict/
+dict-release/
 tests/
 tools/
 node_modules/

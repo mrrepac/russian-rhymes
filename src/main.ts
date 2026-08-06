@@ -1,5 +1,5 @@
-import { MarkdownView, Notice, Plugin, PluginSettingTab, ToggleComponent, debounce, setIcon } from "obsidian";
-import type { App, Debouncer, Editor, PluginManifest, Setting, SettingDefinitionItem, SettingGroup, TAbstractFile, TFolder, WorkspaceLeaf } from "obsidian";
+import { MarkdownView, Notice, Plugin, PluginSettingTab, Setting, ToggleComponent, debounce, setIcon } from "obsidian";
+import type { App, Debouncer, Editor, PluginManifest, SettingControl, SettingDefinition, SettingDefinitionGroup, SettingDefinitionItem, SettingGroup, TAbstractFile, TFolder, WorkspaceLeaf } from "obsidian";
 import type { DictKind, LocalDict } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
@@ -279,7 +279,8 @@ const RussianRhymesPlugin = class extends Plugin {
       },
       { capture: true }
     );
-    this.registerDomEvent(window, "blur", () => {
+    // activeWindow, а не window: правило каталога, и для вынесенной панели оно же верно
+    this.registerDomEvent(activeWindow, "blur", () => {
       this.navArmed = false;
     });
     this.addSettingTab(new RhymesSettingTab(this.app, this));
@@ -314,17 +315,30 @@ const RussianRhymesPlugin = class extends Plugin {
     let _a;
     // data.json пишем мы сами, но правят его и руками, поэтому форма — «может быть, есть»
     const data = await this.loadData() as PersistedData | null;
-    if (data && data.settings) {
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings);
-      this.userStress = (_a = data.userStress) != null ? _a : {};
-      this.localDicts = Array.isArray(data.localDicts) ? data.localDicts.map((d: LocalDict) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" })) : [];
-    } else {
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, data != null ? data : {});
-    }
-    const legacy = this.settings.showRare;
-    if (!Array.isArray(this.settings.lexShow) || this.settings.lexShow.length !== 4) {
-      this.settings.lexShow = [true, true, true, legacy === true];
-    }
+    /*
+     * Личные словари и ручные ударения читаем ВСЕГДА, а не только когда в файле есть ключ
+     * settings. Иначе data.json без него (правка руками, обрезанный файл) отдавал пустой
+     * список словарей — и первое же сохранение записывало эту пустоту на диск, отвязав
+     * словари от их файлов насовсем.
+     */
+    this.userStress = data && typeof data.userStress === "object" && data.userStress !== null ? data.userStress : {};
+    this.localDicts = data && Array.isArray(data.localDicts)
+      ? data.localDicts.map((d: LocalDict) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" }))
+      : [];
+    const stored: Partial<RhymesSettings> = (_a = data == null ? void 0 : data.settings) != null ? _a : {};
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+    /*
+     * Слои лексики. Смотрим на ЗАПИСАННОЕ значение, а не на итог слияния: после
+     * Object.assign в lexShow всегда лежит годный массив из умолчаний, поэтому проверка
+     * итога не срабатывала никогда — и настройка «показывать редкие» из старых версий
+     * при обновлении молча терялась, вместо того чтобы стать четвёртым слоем.
+     * Копия обязательна: панель пишет в этот массив по клику на слой, и без неё правка
+     * уходила бы в общий образец настроек.
+     */
+    if (!Array.isArray(stored.lexShow) || stored.lexShow.length !== 4)
+      this.settings.lexShow = [true, true, true, this.settings.showRare === true];
+    else
+      this.settings.lexShow = stored.lexShow.slice();
     delete this.settings.showRare;
     delete this.settings.pageSize;
     // генератор — пасхалка, а не настройка: раньше «фристайл» открывал раздел навсегда,
@@ -500,6 +514,13 @@ const RussianRhymesPlugin = class extends Plugin {
     // чем записано в настройке, и точное сравнение промахивалось
     this.hiddenDirs = dirs.map((d) => d.toLowerCase());
     this.markHiddenDirs();
+    // прятать нечего — и следить за проводником незачем: наблюдатель просыпался бы на
+    // каждом раскрытии папки до конца сеанса
+    if (this.hiddenDirs.length === 0 && this.dirObserver) {
+      this.dirObserver.disconnect();
+      this.dirObserver = null;
+      return;
+    }
     this.watchFileExplorer();
   }
   /** Поставить класс на строки проводника, отвечающие спрятанным папкам, и снять со всех прочих. */
@@ -647,13 +668,15 @@ const RhymesSettingTab = class extends PluginSettingTab {
   }
   /**
    * Настройки объявлены декларативно (Obsidian 1.13+): приложение рисует их само и,
-   * главное, находит поиском по настройкам. display() здесь больше нет — при непустом
-   * getSettingDefinitions() Obsidian его и не вызывает, а с 1.13 он ещё и устаревший.
+   * главное, находит поиском по настройкам.
    *
    * Императивными (через render) остались только те строки, которым декларативной формы
    * не хватает: кнопка скачивания гасит себя на время работы, поля папок применяются
    * по потере фокуса, а списки личных словарей — это не настройки, а данные
    * пользователя со своим переименованием, тумблерами и перетаскиванием.
+   *
+   * Ниже есть и display(): весь декларативный слой появился в 1.13, и приложение
+   * постарше о нём не знает — вкладка настроек открывалась пустой. См. display().
    */
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
@@ -695,8 +718,8 @@ const RhymesSettingTab = class extends PluginSettingTab {
           },
           { name: t("dlDict"), desc: t("dlDesc"), render: (setting) => this.renderDownload(setting) },
           { name: t("mainFolder"), desc: t("mainFolderDesc"), render: (setting) => this.renderFolder(setting, "main") },
-          { name: t("invFiles"), desc: t("invDesc"), render: (setting, group) => this.renderInventory(setting, group) },
-          { name: t("stressTitle"), desc: t("stressDesc"), render: (setting, group) => this.renderStresses(setting, group) }
+          { name: t("invFiles"), desc: t("invDesc"), render: (setting) => this.renderInventory(setting) },
+          { name: t("stressTitle"), desc: t("stressDesc"), render: (setting) => this.renderStresses(setting) }
         ]
       },
       {
@@ -714,6 +737,93 @@ const RhymesSettingTab = class extends PluginSettingTab {
       this.dictSection("defs", t("locDefs"), t("locReorderHint")),
       this.dictSection("syns", t("locSyns"), t("locSynsHint"))
     ];
+  }
+  /**
+   * Запасная отрисовка вкладки настроек — для приложения, которое не знает про
+   * декларативные настройки: весь этот слой (getSettingDefinitions/getControlValue/
+   * setControlValue/update) появился только в Obsidian 1.13. На 1.13+ приложение при
+   * непустом getSettingDefinitions() display() не вызывает вовсе, поэтому здесь ничего
+   * не дублируется; а на устройстве, отставшем по версии, это единственный способ
+   * увидеть настройки — иначе вкладка открывалась пустой, и ни папку словаря задать,
+   * ни личный словарь подключить было нельзя. Список строк один и тот же, так что
+   * расходиться двум формам не с чего.
+   */
+  display() {
+    const host = this.containerEl;
+    host.empty();
+    for (const item of this.getSettingDefinitions())
+      this.renderLegacyItem(host, item);
+  }
+  /** Одна строка (или группа строк) старым способом — через Setting. */
+  renderLegacyItem(host: HTMLElement, item: SettingDefinitionItem) {
+    const group = item as SettingDefinitionGroup;
+    if (group.type === "group" || group.type === "list") {
+      if (group.heading)
+        new Setting(host).setName(group.heading).setHeading();
+      for (const sub of group.items || [])
+        this.renderLegacyItem(host, sub as SettingDefinitionItem);
+      return;
+    }
+    const def = item as SettingDefinition;
+    const setting = new Setting(host);
+    setting.setName(def.name);
+    if (def.desc)
+      setting.setDesc(def.desc);
+    if (def.render) {
+      // group-аргумент нашим отрисовщикам не нужен, они его и не берут
+      def.render(setting, null as unknown as SettingGroup);
+      return;
+    }
+    if (def.control)
+      this.renderLegacyControl(setting, def.control);
+  }
+  /**
+   * Поле ввода старым способом. Поддержаны ровно те виды, которые плагин объявляет
+   * (переключатель, число, строка, выпадающий список) — заводить остальные незачем,
+   * их некому показать.
+   */
+  renderLegacyControl(setting: Setting, control: SettingControl) {
+    const key = control.key;
+    const value = this.getControlValue(key);
+    if (control.type === "toggle") {
+      setting.addToggle((c) => c.setValue(value === true).onChange((v) => void this.setControlValue(key, v)));
+      return;
+    }
+    if (control.type === "dropdown") {
+      setting.addDropdown((c) => {
+        c.addOptions(control.options);
+        c.setValue(String(value != null ? value : ""));
+        c.onChange((v) => void this.setControlValue(key, v));
+      });
+      return;
+    }
+    if (control.type === "number") {
+      setting.addText((c) => {
+        c.inputEl.type = "number";
+        if (control.placeholder)
+          c.setPlaceholder(control.placeholder);
+        c.setValue(value == null ? "" : String(value));
+        // по change, а не на каждый символ: иначе «40» по дороге к «400» успевало сохраниться
+        c.inputEl.addEventListener("change", () => void this.setControlValue(key, Number(c.getValue())));
+      });
+      return;
+    }
+    if (control.type === "text") {
+      setting.addText((c) => {
+        c.setValue(typeof value === "string" ? value : "");
+        c.inputEl.addEventListener("change", () => void this.setControlValue(key, c.getValue()));
+      });
+    }
+  }
+  /**
+   * Перерисовать вкладку. update() — часть того же декларативного слоя, что и всё
+   * остальное, и на старом приложении его просто нет: там перерисовываем сами.
+   */
+  refresh() {
+    if (typeof this.update === "function")
+      this.refresh();
+    else if (this.containerEl)
+      this.display();
   }
   /** startupLoad валидируем: data.json правят руками. Остальное читается как есть. */
   getControlValue(key: string): unknown {
@@ -767,7 +877,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
         btn.setDisabled(false);
         this.plugin.refreshPanel();
         // список файлов после закачки врал бы, если бы остался прежним
-        this.update();
+        this.refresh();
       });
     });
   }
@@ -834,7 +944,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
       console.error("Russian Rhymes: moving personal dictionaries failed", e);
       new Notice(t("locMoveFail"));
     }
-    this.update();
+    this.refresh();
   }
   /**
    * Секция личных словарей одного вида: толковые идут в «Значение», синонимические —
@@ -849,7 +959,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
         {
           name: title,
           desc: dicts.length ? hint : t("locEmpty"),
-          render: (setting, group) => this.renderDictSection(setting, group, kind, dicts)
+          render: (setting) => this.renderDictSection(setting, kind, dicts)
         }
       ]
     };
@@ -872,18 +982,20 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * видно оборванную закачку — до этого недостающий шард просто оборачивался пустой
    * вкладкой. Читается с диска, поэтому список заполняется после ответа, а не сразу.
    */
-  renderInventory(setting: Setting, group: SettingGroup) {
+  renderInventory(setting: Setting) {
     const listEl = this.wideHost(setting).createDiv({ cls: "rr-shards" });
     listEl.createDiv({ cls: "rr-shard-note", text: t("invLoading") });
-    const fill = () => {
-      void this.plugin.dict.inventory().then((inv) => {
+    // «Проверить заново» обязана лезть на диск, а не показывать запомненное: за этим
+    // кнопку и нажимают — например, докачав файл руками
+    const fill = (refresh = false) => {
+      void this.plugin.dict.inventory(refresh).then((inv) => {
         listEl.empty();
         renderShardList(listEl, inv, true);
       });
     };
     setting.addExtraButton((btn) => {
       btn.setIcon("refresh-cw").setTooltip(t("invRefresh"));
-      btn.onClick(() => fill());
+      btn.onClick(() => fill(true));
     });
     fill();
     // строку могут перерисовать в одиночку, а список висит рядом с ней, не внутри
@@ -895,7 +1007,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
    * это можно было только повторным кликом по правильной гласной, если вспомнить, где.
    * Здесь их видно списком, каждое снимается по клику.
    */
-  renderStresses(setting: Setting, group: SettingGroup) {
+  renderStresses(setting: Setting) {
     const listEl = this.wideHost(setting).createDiv({ cls: "rr-stresses" });
     const fill = () => {
       listEl.empty();
@@ -928,7 +1040,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     fill();
     return () => listEl.remove();
   }
-  renderDictSection(setting: Setting, group: SettingGroup, kind: DictKind, dicts: LocalDict[]) {
+  renderDictSection(setting: Setting, kind: DictKind, dicts: LocalDict[]) {
     const label = setting.controlEl.createEl("label", { cls: "rr-add-btn", text: t("btnAddDsl") });
     const fileInput = label.createEl("input", {
       cls: "rr-file-hidden",
@@ -1037,7 +1149,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
     this.plugin.syncLocalManifest();
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.update();
+    this.refresh();
   }
   /** Переставить словарь fromId на место targetId и сохранить порядок. */
   async moveDict(fromId: string, targetId: string) {
@@ -1064,11 +1176,11 @@ const RhymesSettingTab = class extends PluginSettingTab {
     this.plugin.syncLocalManifest();
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.update();
+    this.refresh();
   }
   async importFiles(files: File[], kind: DictKind) {
     new Notice(t("noticeConverting"));
-    await new Promise((r) => window.setTimeout(r, 30));
+    await new Promise((r) => activeWindow.setTimeout(r, 30));
     let added = 0;
     let updated = 0;
     for (const file of files) {
@@ -1117,7 +1229,7 @@ const RhymesSettingTab = class extends PluginSettingTab {
       new Notice(t("noticeDictUpdated") + updated);
     await this.plugin.saveSettings();
     this.plugin.refreshPanel();
-    this.update();
+    this.refresh();
   }
 };
 export default RussianRhymesPlugin;

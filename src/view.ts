@@ -8,6 +8,15 @@ import { t } from "./i18n";
 
 type TabId = "rhymes" | "meaning" | "assoc" | "gen";
 type SoundKind = "all" | "exact" | "near" | "conson" | "asson" | "allit";
+/** Готовые подписи для чипов одной отрисовки — см. chipLabels(). */
+interface ChipLabels {
+  pos: Record<string, string>;
+  lex: string[];
+  mood: Record<string, string>;
+  sem: Record<string, string>;
+  hint: string;
+  related: string;
+}
 /*
  * Плагин описан структурно, а не импортом типа из main.ts: там класс объявлен
  * выражением (const X = class …), а такое имя типа не создаёт — и форму менять нельзя,
@@ -162,8 +171,27 @@ const STASH_MAX = 60;
 // вставка слова в заметку: Alt+клик на десктопе, долгое нажатие на телефоне
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP = 10;
+// одно и то же слово, скопированное дважды подряд (двойной клик = провал в слово), не
+// должно давать два уведомления подряд
+const COPY_NOTICE_MS = 600;
 const insertHint = () => t(Platform.isMobile ? "insertHintTouch" : "insertHint");
+// перетаскивание — мышиный жест: на телефоне о нём говорить незачем
+const dragHint = () => Platform.isMobile ? "" : " \xB7 " + t("dragHint");
+// подсказка к кнопке «качество»: чем один вид созвучия отличается от другого
+const KIND_HINT = (): Partial<Record<SoundKind, string>> => ({
+  all: t("kindAllHint"),
+  exact: t("rhymesHint"),
+  near: t("nearHint"),
+  conson: t("consonHint"),
+  asson: t("assonHint"),
+  allit: t("allitHint")
+});
 const displayCmp = (a: RhymeEntry, b: RhymeEntry) => lexCat(a.f) - lexCat(b.f) || a.word.localeCompare(b.word, "ru");
+/** Подпись выбранного значения фильтра; выбор вне списка показываем как «все». */
+function optLabel<V>(opts: [V, string][], value: V) {
+  const hit = opts.find(([v]) => v === value);
+  return hit ? hit[1] : t("filterAll");
+}
 const RhymesView = class extends ItemView {
   plugin: HostPlugin;
   word: string;
@@ -225,6 +253,18 @@ const RhymesView = class extends ItemView {
   genBagKey: string;
   resultsHost: HTMLElement | null;
   copyTimers: Set<number>;
+  // номер текущего показа слова: showWord ждёт словарь и блочные шарды, а за время
+  // ожидания слово могут сменить (слежение за курсором, двойной клик по чипу). Устаревший
+  // показ обязан выйти молча, иначе панель склеивала бы данные двух разных слов
+  loadSeq: number;
+  // объединённый список текущего вида: за одну отрисовку он нужен четырежды (разброс
+  // клаузул, счётчики двух помет, сама выдача), а в виде «все» это склейка до 11 тыс. слов
+  soundEpoch: number;
+  soundCacheKey: string;
+  soundCacheList: RhymeEntry[] | null;
+  // последнее скопированное слово и когда — чтобы не показывать два уведомления подряд
+  lastCopied: string;
+  lastCopiedAt: number;
   // элементы шапки: создаются в onOpen, до него их нет
   inputEl!: HTMLInputElement;
   clearBtn!: HTMLElement;
@@ -310,6 +350,12 @@ const RhymesView = class extends ItemView {
     this.resultsHost = null;
     // фильтры+список звукового раздела — перерисовываем только его
     this.copyTimers = /* @__PURE__ */ new Set();
+    this.loadSeq = 0;
+    this.soundEpoch = 0;
+    this.soundCacheKey = "";
+    this.soundCacheList = null;
+    this.lastCopied = "";
+    this.lastCopiedAt = 0;
     this.plugin = plugin;
     this.loadFilters();
     this.shown = PAGE;
@@ -431,10 +477,16 @@ const RhymesView = class extends ItemView {
       this.plugin.genUnlocked = true;
     this.soundKind = this.soundKindPref;
     this.shown = PAGE;
+    // всё, что ниже, идёт через ожидания: словарь, блочные толкования, формы. Пока они
+    // идут, слово могли сменить — такой показ обязан прекратиться, иначе в панели
+    // окажутся рифмы к одному слову и значения к другому
+    const seq = ++this.loadSeq;
     const dict = this.plugin.dict;
     if (dict.status !== "ready") {
       this.renderStatus(t("dictLoading"));
       await dict.load();
+      if (seq !== this.loadSeq)
+        return;
       // сюда попадаем, если слово запросили раньше, чем догрузилась первая волна;
       // про сломанные личные словари и недостающие файлы словаря узнаём тут же
       this.plugin.warnBadDicts();
@@ -473,8 +525,12 @@ const RhymesView = class extends ItemView {
     this.associations = dict.associationsFor(this.word);
     this.metagrams = dict.metagramsFor(this.word);
     this.anagrams = dict.anagramsFor(this.word);
-    this.definitions = await dict.definitionsFor(this.word);
-    this.forms = await dict.formsFor(this.word);
+    const defs = await dict.definitionsFor(this.word);
+    const forms = await dict.formsFor(this.word);
+    if (seq !== this.loadSeq)
+      return;
+    this.definitions = defs;
+    this.forms = forms;
     this.phrases = dict.phrasesFor(this.word);
     this.idioms = dict.idiomsFor(this.word);
     this.proverbs = dict.proverbsFor(this.word);
@@ -493,6 +549,8 @@ const RhymesView = class extends ItemView {
   }
   loadRhymes() {
     this.sectionShown = {};
+    // списки под словом сменились — объединение, посчитанное для прежнего слова, недействительно
+    this.soundEpoch++;
     this.allitAll = this.plugin.dict.alliterationsFor(this.word);
     if (this.stress === null) {
       // без ударения рифм не собрать, но аллитерации собраны — пометы им всё равно нужны
@@ -565,21 +623,35 @@ const RhymesView = class extends ItemView {
     if (!tabs.includes(this.tab))
       this.tab = (_a = tabs[0]) != null ? _a : "rhymes";
   }
-  /** Виды созвучий, у которых есть данные, — для пилюль-переключателей внутри «Рифм». */
-  availableKinds() {
-    const kinds = [];
+  /** Виды созвучий, у которых есть данные, — для меню «качество» внутри «Рифм». */
+  availableKinds(): [SoundKind, string][] {
+    const kinds: [SoundKind, string][] = [];
     if (this.all.some((e) => e.exact))
-      kinds.push(["exact", t("kindExact"), t("rhymesHint")]);
+      kinds.push(["exact", t("kindExact")]);
     if (this.all.some((e) => !e.exact))
-      kinds.push(["near", t("tabNear"), t("nearHint")]);
+      kinds.push(["near", t("tabNear")]);
     if (this.consAll.length > 0)
-      kinds.push(["conson", t("tabConson"), t("consonHint")]);
+      kinds.push(["conson", t("tabConson")]);
     if (this.assonAll.length > 0)
-      kinds.push(["asson", t("tabAsson"), t("assonHint")]);
+      kinds.push(["asson", t("tabAsson")]);
     return kinds;
   }
-  /** Список для текущего вида: конкретный вид или «все» — объединение без повторов, сильные сверху. */
-  soundList() {
+  /**
+   * Список для текущего вида: конкретный вид или «все» — объединение без повторов,
+   * сильные сверху. Результат держим до смены слова, ударения или вида: за одну отрисовку
+   * список спрашивают четыре раза, и в виде «все» это была бы четырёхкратная склейка
+   * тысяч слов. Возвращённый массив только читают — сортируют уже копию (см. filtered).
+   */
+  soundList(): RhymeEntry[] {
+    const ck = `${this.soundEpoch}:${this.soundKind}`;
+    if (this.soundCacheKey === ck && this.soundCacheList)
+      return this.soundCacheList;
+    const list = this.buildSoundList();
+    this.soundCacheKey = ck;
+    this.soundCacheList = list;
+    return list;
+  }
+  buildSoundList(): RhymeEntry[] {
     switch (this.soundKind) {
       case "exact":
         return this.all.filter((e) => e.exact);
@@ -665,7 +737,7 @@ const RhymesView = class extends ItemView {
     // держим доступной, иначе до неё нельзя было бы дотянуться, чтобы её же и загрузить
     if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0)
       list.push("meaning");
-    const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 ||this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
+    const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 || this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
     if (hasSem)
       list.push("assoc");
     if (this.plugin.genUnlocked)
@@ -847,11 +919,17 @@ const RhymesView = class extends ItemView {
   }
   renderStatus(msg: string) {
     this.bodyEl.empty();
+    // ссылки на вычищенные узлы держать нельзя: копилка дорисовывает себя по месту,
+    // и с оторванным хостом она рисовалась бы в никуда
+    this.resultsHost = null;
+    this.stashHost = null;
     this.bodyEl.createDiv({ cls: "rr-status", text: msg });
   }
   /** Экран «нет словаря»: пояснение + кнопка скачивания с прогрессом (мобильный/новая установка). */
   renderMissing() {
     this.bodyEl.empty();
+    this.resultsHost = null;
+    this.stashHost = null;
     const box = this.bodyEl.createDiv({ cls: "rr-missing" });
     box.createDiv({ cls: "rr-status", text: t("dictMissing") });
     const btn = box.createEl("button", { cls: "rr-add-btn", text: t("dlDict") });
@@ -898,7 +976,10 @@ const RhymesView = class extends ItemView {
     const listEl = box.createDiv({ cls: "rr-stash" });
     for (const w of this.stash) {
       const chip = listEl.createSpan({ cls: "rr-chip rr-stash-chip", text: w });
-      chip.title = t("stashRemoveHint");
+      chip.title = t("stashRemoveHint") + dragHint();
+      // копилка — то место, откуда слово тащат в текст: она и собрана из уже взятого.
+      // Заносить обратно в неё же нечего, поэтому remember=false
+      this.attachDrag(chip, w, false);
       // клик убирает: копилка набирается кликами, и разбирается пусть так же
       chip.addEventListener("click", () => this.stashRemove(w));
     }
@@ -995,8 +1076,16 @@ const RhymesView = class extends ItemView {
   }
   /** Копировать слово в буфер с уведомлением — «Скопировано» только при реальном успехе. */
   copyWord(w: string) {
+    // двойной клик по чипу = провал в слово, но первый его клик уже скопировал. Копию
+    // не отменяем (буфер и должен держать это слово), а второе уведомление подряд гасим
+    const again = w === this.lastCopied && Date.now() - this.lastCopiedAt < COPY_NOTICE_MS;
+    this.lastCopied = w;
+    this.lastCopiedAt = Date.now();
     void this.writeClipboard(w).then((ok) => {
-      new Notice(ok ? t("copied") + w : t("copyFail"));
+      if (!ok)
+        new Notice(t("copyFail"));
+      else if (!again)
+        new Notice(t("copied") + w);
       if (ok)
         this.stashAdd(w);
     });
@@ -1106,9 +1195,33 @@ const RhymesView = class extends ItemView {
     });
     return state;
   }
+  /**
+   * Перетаскивание слова в заметку. Ничего своего тут не нужно: редактор Obsidian —
+   * обычный приёмник html5-перетаскивания и вставляет text/plain ровно в ту точку, куда
+   * бросили. Поэтому мышью слово можно положить в середину строки, чего не умеют ни
+   * копия, ни Alt+клик (тот подменяет слово под курсором).
+   * remember — заносить ли слово в копилку по успешному броску; у самой копилки не надо.
+   */
+  attachDrag(el: HTMLElement, text: string, remember = true) {
+    el.setAttr("draggable", "true");
+    el.addEventListener("dragstart", (e: DragEvent) => {
+      if (!e.dataTransfer)
+        return;
+      e.dataTransfer.setData("text/plain", text);
+      e.dataTransfer.effectAllowed = "copy";
+      el.addClass("is-dragging");
+    });
+    el.addEventListener("dragend", (e: DragEvent) => {
+      el.removeClass("is-dragging");
+      // «none» — бросили мимо (в пустоту, в другое окно): считать это взятым словом нельзя
+      if (remember && e.dataTransfer && e.dataTransfer.dropEffect !== "none")
+        this.stashAdd(text);
+    });
+  }
   /** Клик — копировать, Alt+клик или долгое нажатие — вставить в заметку (без поиска по двойному клику). */
   attachCopyInsert(el: HTMLElement, text: string) {
     const lp = this.attachLongPressInsert(el, text);
+    this.attachDrag(el, text);
     el.addEventListener("click", (e: MouseEvent) => {
       if (lp.fired) {
         lp.fired = false;
@@ -1120,42 +1233,26 @@ const RhymesView = class extends ItemView {
         this.copyWord(text);
     });
   }
-  /** Клик — копировать, двойной клик — искать рифмы к этому слову. Таймер, чтобы двойной не копировал. */
+  /**
+   * Клик — копировать, двойной клик — искать рифмы к этому слову. Копия срабатывает
+   * сразу: раньше она ждала 200 мс, чтобы двойной клик не копировал, и эта задержка
+   * висела на каждом взятом слове. Двойной клик теперь просто копирует то слово, в
+   * которое проваливается, — второе уведомление гасит copyWord.
+   */
   attachWordActions(el: HTMLElement, word: string) {
     const lp = this.attachLongPressInsert(el, word);
-    let timer: number | null = null;
-    const cancel = () => {
-      if (timer !== null) {
-        this.containerEl.win.clearTimeout(timer);
-        this.copyTimers.delete(timer);
-        timer = null;
-      }
-    };
+    this.attachDrag(el, word);
     el.addEventListener("click", (e: MouseEvent) => {
       if (lp.fired) {
         lp.fired = false;
-        cancel();
         return;
       }
-      if (e.altKey) {
-        cancel();
+      if (e.altKey)
         this.insertWord(word);
-        return;
-      }
-      if (timer !== null)
-        return;
-      timer = this.containerEl.win.setTimeout(() => {
-        if (timer !== null)
-          this.copyTimers.delete(timer);
-        timer = null;
+      else
         this.copyWord(word);
-      }, 200);
-      this.copyTimers.add(timer);
     });
-    el.addEventListener("dblclick", () => {
-      cancel();
-      void this.showWord(word);
-    });
+    el.addEventListener("dblclick", () => void this.showWord(word));
   }
   /** Погасить отложенные таймеры копирования (при закрытии панели или перерисовке). */
   cancelCopyTimers() {
@@ -1316,7 +1413,7 @@ const RhymesView = class extends ItemView {
   }
   /** Пилюли строгости + фильтры + список рифм. Зовётся заново при любом клике по фильтру. */
   renderSoundResults() {
-    let _a, _b, _c, _d, _e, _f;
+    let _a, _b;
     const host = this.resultsHost;
     if (!host)
       return;
@@ -1341,10 +1438,11 @@ const RhymesView = class extends ItemView {
     // так что предлагаем только те значения, которые в списке реально есть, и с числом:
     // видно заранее, сколько слов останется. Липкий выбор, которого в списке нет, не
     // действует — иначе выдача была бы пуста, а причина не видна
+    const L = this.chipLabels();
     const moodCounts = this.traitCounts(this.moodMap, MOOD_KEYS);
     const semCounts = this.traitCounts(this.semMap, SEM_KEYS);
     const moodOpts: [string, string][] = MOOD_KEYS.filter((k) => moodCounts.has(k))
-      .map((k) => [k, `${MOOD_LABEL()[k]} (${moodCounts.get(k)})`]);
+      .map((k) => [k, `${L.mood[k]} (${moodCounts.get(k)})`]);
     let concrete = 0;
     let abstract = 0;
     for (const [code, n] of semCounts) {
@@ -1362,18 +1460,18 @@ const RhymesView = class extends ItemView {
     }
     for (const k of SEM_KEYS) {
       if (semCounts.has(k))
-        semOpts.push([k, `${SEM_LABEL()[k]} (${semCounts.get(k)})`]);
+        semOpts.push([k, `${L.sem[k]} (${semCounts.get(k)})`]);
     }
     this.moodOn = moodOpts.some(([k]) => k === this.moodFilter) ? this.moodFilter : "";
     this.semOn = semOpts.some(([k]) => k === this.semFilter) ? this.semFilter : "";
-    const posLabel = POS_LABEL();
+    const posLabel = L.pos;
     const list = this.filtered();
     const bar = host.createDiv({ cls: "rr-filters" });
     if (kinds.length >= 2 || this.allitAll.length > 0) {
-      const kindOpts: [SoundKind, string][] = [["all", t("kindAll")], ...kinds.map(([k, l]) => [k, l] as [SoundKind, string])];
+      const kindOpts: [SoundKind, string][] = [["all", t("kindAll")], ...kinds];
       if (this.allitAll.length > 0)
         kindOpts.push(["allit", t("kindAllit")]);
-      this.filterMenu(
+      const kindBtn = this.filterMenu(
         bar,
         t("kindLabel"),
         (_b = (_a = kindOpts.find(([k]) => k === this.soundKind)) == null ? void 0 : _a[1]) != null ? _b : t("kindAll"),
@@ -1391,12 +1489,15 @@ const RhymesView = class extends ItemView {
           }
         }
       );
+      // чем «созвучия» отличаются от «ассонанса», по названию не догадаться — объясняем
+      // подсказкой к кнопке; она же меняется вместе с выбранным видом
+      kindBtn.title = KIND_HINT()[this.soundKind] || "";
     }
     const sylOpts: [number, string][] = [[0, t("filterAll")], [1, "1"], [2, "2"], [3, "3"], [4, "4+"]];
     this.filterMenu(
       bar,
       t("syllables"),
-      (_d = (_c = sylOpts.find(([v]) => v === this.sylFilter)) == null ? void 0 : _c[1]) != null ? _d : t("filterAll"),
+      optLabel(sylOpts, this.sylFilter),
       this.sylFilter !== 0,
       (menu) => {
         for (const [val, label] of sylOpts) {
@@ -1439,11 +1540,26 @@ const RhymesView = class extends ItemView {
         }
       );
     }
-    const posOpts: [string, string][] = [["", t("filterAll")], ["n", t("posN")], ["v", t("posV")], ["a", t("posA")], ["d", t("posD")], ["i", t("posI")]];
+    // части речи — только те, что в списке есть, и с числом: междометий во всём словаре
+    // 202 штуки на 900 тысяч слов, и пункт «межд.» почти всегда обещал пустую выдачу.
+    // Липкий выбор из меню не выкидываем, даже если его тут нет: иначе фильтр молча
+    // перестал бы действовать при переходе к слову без глаголов
+    const posCounts = /* @__PURE__ */ new Map<string, number>();
+    for (const e of this.soundList())
+      posCounts.set(e.p, (posCounts.get(e.p) || 0) + 1);
+    const posOpts: [string, string][] = [["", t("filterAll")]];
+    for (const k of POS_KEYS) {
+      if (!k || !posLabel[k])
+        continue;
+      if (posCounts.has(k))
+        posOpts.push([k, `${posLabel[k]} (${posCounts.get(k)})`]);
+      else if (k === this.posFilter)
+        posOpts.push([k, `${posLabel[k]} (0)`]);
+    }
     this.filterMenu(
       bar,
       t("filterPos"),
-      (_f = (_e = posOpts.find(([v]) => v === this.posFilter)) == null ? void 0 : _e[1]) != null ? _f : t("filterAll"),
+      optLabel(posOpts, this.posFilter),
       this.posFilter !== "",
       (menu) => {
         for (const [val, label] of posOpts) {
@@ -1462,7 +1578,7 @@ const RhymesView = class extends ItemView {
     if (moodOpts.length > 0 || semOpts.length > 0) {
       const on: string[] = [];
       if (this.moodOn)
-        on.push(MOOD_LABEL()[this.moodOn]);
+        on.push(L.mood[this.moodOn]);
       if (this.semOn)
         on.push(this.semFilterLabel(this.semOn));
       const traitBtn = this.filterMenu(bar, t("traitLabel"), on.length > 0 ? on.join(", ") : t("filterAll"), on.length > 0, (menu) => {
@@ -1482,12 +1598,7 @@ const RhymesView = class extends ItemView {
       });
       traitBtn.title = t("traitHint");
     }
-    const lexOpts: [number, string][] = [
-      [0, t("lexBase")],
-      [1, t("lexFreq")],
-      [2, t("lexCommon")],
-      [3, t("lexRare")]
-    ];
+    const lexOpts: [number, string][] = L.lex.map((label, idx) => [idx, label]);
     const lexOn = lexOpts.filter(([idx]) => this.plugin.settings.lexShow[idx]);
     this.filterMenu(
       bar,
@@ -1525,9 +1636,8 @@ const RhymesView = class extends ItemView {
       });
     }
     bar.createSpan({ cls: "rr-count", text: `${list.length}${t("rhymesCount")}` });
-    const lexLabel = [t("lexBase"), t("lexFreq"), t("lexCommon"), t("lexRare")];
     if (this.soundKind === "all" && kinds.length + (this.allitAll.length > 0 ? 1 : 0) >= 2) {
-      this.renderKindSections(host, posLabel, lexLabel);
+      this.renderKindSections(host, L);
       return;
     }
     const listEl = host.createDiv({ cls: "rr-list" });
@@ -1536,7 +1646,7 @@ const RhymesView = class extends ItemView {
       return;
     }
     for (const e of list.slice(0, this.shown))
-      this.renderChip(listEl, e, posLabel, lexLabel);
+      this.renderChip(listEl, e, L);
     if (list.length > this.shown) {
       const more = host.createEl("button", { cls: "rr-more", text: `${t("showMore")} (${list.length - this.shown})` });
       more.addEventListener("click", () => {
@@ -1545,22 +1655,37 @@ const RhymesView = class extends ItemView {
       });
     }
   }
+  /**
+   * Подписи, общие для всех чипов одной отрисовки. Строятся один раз: каждая такая
+   * таблица — это 3–12 обращений к moment.locale() внутри t(), а чипов на экране сотни.
+   */
+  chipLabels(): ChipLabels {
+    return {
+      pos: POS_LABEL(),
+      lex: [t("lexBase"), t("lexFreq"), t("lexCommon"), t("lexRare")],
+      mood: MOOD_LABEL(),
+      sem: SEM_LABEL(),
+      hint: `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`,
+      related: t("relatedHint")
+    };
+  }
   /** Один чип-слово: клик — копия, двойной — рифмы к нему; класс по лексическому слою. */
-  renderChip(container: HTMLElement, e: RhymeEntry, posLabel: Record<string, string>, lexLabel: string[]) {
+  renderChip(container: HTMLElement, e: RhymeEntry, L: ChipLabels) {
     const lc = lexCat(e.f);
     const related = this.relatedWords.has(e.word);
     const chip = container.createSpan({ cls: `rr-chip rr-lex${lc}` + (related ? " rr-related" : ""), text: markStress(e.word, e.s) });
     // пометы показываем только подсказкой: цветом их не покажешь — четыре слоя лексики уже
-    // заняли и фон, и насыщенность чипа
-    const mood = this.moodMap.get(e.word);
-    const sem = this.semMap.get(e.word);
-    chip.title = `${t("chipHint")} \xB7 ${insertHint()}${posLabel[e.p] ? " \xB7 " + posLabel[e.p] : ""} \xB7 ${lexLabel[lc]}` +
-      `${mood ? " \xB7 " + MOOD_LABEL()[mood] : ""}${sem ? " \xB7 " + SEM_LABEL()[sem] : ""}` +
-      `${related ? " \xB7 " + t("relatedHint") : ""}`;
+    // заняли и фон, и насыщенность чипа. Незнакомый код пометы (шард новее плагина)
+    // пропускаем, иначе в подсказке повисло бы «· undefined»
+    const mood = L.mood[this.moodMap.get(e.word) || ""];
+    const sem = L.sem[this.semMap.get(e.word) || ""];
+    chip.title = `${L.hint}${L.pos[e.p] ? " \xB7 " + L.pos[e.p] : ""} \xB7 ${L.lex[lc]}` +
+      `${mood ? " \xB7 " + mood : ""}${sem ? " \xB7 " + sem : ""}` +
+      `${related ? " \xB7 " + L.related : ""}`;
     this.attachWordActions(chip, e.word);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
-  renderKindSections(host: HTMLElement, posLabel: Record<string, string>, lexLabel: string[]) {
+  renderKindSections(host: HTMLElement, L: ChipLabels) {
     const src: [SoundKind, string, RhymeEntry[]][] = [
       ["exact", t("kindExact"), this.all.filter((e) => e.exact)],
       ["near", t("tabNear"), this.all.filter((e) => !e.exact)],
@@ -1584,11 +1709,11 @@ const RhymesView = class extends ItemView {
     }
     for (const [kind, label, list] of toRender) {
       const def = kind === "exact" || kind === "near" || kind === firstKind;
-      this.renderKindSection(host, kind, label, list, def, posLabel, lexLabel);
+      this.renderKindSection(host, kind, label, list, def, L);
     }
   }
   /** Одна сворачиваемая секция вида: заголовок со счётчиком; чипы рисуются лениво при раскрытии. */
-  renderKindSection(host: HTMLElement, kind: SoundKind, label: string, list: RhymeEntry[], defaultOpen: boolean, posLabel: Record<string, string>, lexLabel: string[]) {
+  renderKindSection(host: HTMLElement, kind: SoundKind, label: string, list: RhymeEntry[], defaultOpen: boolean, L: ChipLabels) {
     let _a;
     const details = host.createEl("details", { cls: "rr-ksec" });
     details.open = (_a = this.sectionOpen[kind]) != null ? _a : defaultOpen;
@@ -1601,7 +1726,7 @@ const RhymesView = class extends ItemView {
       body.empty();
       const shown = (_a2 = this.sectionShown[kind]) != null ? _a2 : PAGE;
       for (const e of list.slice(0, shown))
-        this.renderChip(body, e, posLabel, lexLabel);
+        this.renderChip(body, e, L);
       if (list.length > shown) {
         const more = body.createEl("button", { cls: "rr-more", text: `${t("showMore")} (${list.length - shown})` });
         more.addEventListener("click", () => {
@@ -1643,11 +1768,12 @@ const RhymesView = class extends ItemView {
       text: t("formsTitle") + (f.lemma ? " \u2192 " + f.lemma : "")
     });
     const grid = details.createDiv({ cls: "rr-forms-grid" });
+    const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
     for (const r of f.rows) {
       const row = grid.createDiv({ cls: "rr-form-row" });
       row.createSpan({ cls: "rr-form-label", text: r.label });
       const val = row.createSpan({ cls: "rr-form-val", text: r.form });
-      val.title = `${t("copyHint")} \xB7 ${insertHint()}`;
+      val.title = hint;
       this.attachCopyInsert(val, stripStress(r.form));
     }
   }
@@ -1731,9 +1857,10 @@ const RhymesView = class extends ItemView {
   }
   chipGroup(wrap: HTMLElement, words: string[]) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`;
     for (const w of words) {
       const chip = row.createSpan({ cls: "rr-chip", text: w });
-      chip.title = `${t("chipHint")} · ${insertHint()}`;
+      chip.title = hint;
       this.attachWordActions(chip, w);
     }
   }
@@ -1783,10 +1910,11 @@ const RhymesView = class extends ItemView {
     if (ph && ph.items.length > 0) {
       any = true;
       this.semSection(wrap, "phrases", t("tabPhrases") + lemmaSuffix(ph.lemma), ph.items.length, (b) => {
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
         for (const it of ph.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it.phrase });
-          pt.title = `${t("copyHint")} \xB7 ${insertHint()}`;
+          pt.title = hint;
           this.attachCopyInsert(pt, it.phrase);
           if (it.gloss)
             prow.createSpan({ cls: "rr-phrase-gloss", text: " \u2014 " + it.gloss });
@@ -1798,10 +1926,11 @@ const RhymesView = class extends ItemView {
     if (prov && prov.items.length > 0) {
       any = true;
       this.semSection(wrap, "prov", t("secProverbs") + lemmaSuffix(prov.lemma), prov.items.length, (b) => {
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
         for (const it of prov.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it });
-          pt.title = `${t("copyHint")} \xB7 ${insertHint()}`;
+          pt.title = hint;
           this.attachCopyInsert(pt, it);
         }
         b.createDiv({ cls: "rr-def-src", text: t("defSource") });
