@@ -8220,25 +8220,30 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     section.createDiv({ cls: "rr-def-src", text: t("translationSource") });
   }
-  /** Сворачиваемая таблица словоформ с ударениями — вверху вкладки «Значение». */
+  /** Сворачиваемые формы и английский перевод — единый блок вверху «Значения». */
   renderForms(host) {
     const f = this.forms;
-    if (!f || f.rows.length === 0)
+    const hasForms = !!f && f.rows.length > 0;
+    const hasTranslation = !!this.englishTranslations && this.englishTranslations.groups.length > 0;
+    if (!hasForms && !hasTranslation)
       return;
     const details = host.createEl("details", { cls: "rr-forms" });
     details.createEl("summary", {
       cls: "rr-forms-summary",
-      text: t("formsTitle") + (f.lemma ? " \u2192 " + f.lemma : "")
+      text: t("formsTitle") + (f && f.lemma ? " \u2192 " + f.lemma : "")
     });
-    const grid = details.createDiv({ cls: "rr-forms-grid" });
-    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
-    for (const r of f.rows) {
-      const row = grid.createDiv({ cls: "rr-form-row" });
-      row.createSpan({ cls: "rr-form-label", text: r.label });
-      const val = row.createSpan({ cls: "rr-form-val", text: r.form });
-      val.title = hint;
-      this.attachWordActions(val, stripStress(r.form));
+    if (f && hasForms) {
+      const grid = details.createDiv({ cls: "rr-forms-grid" });
+      const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
+      for (const r of f.rows) {
+        const row = grid.createDiv({ cls: "rr-form-row" });
+        row.createSpan({ cls: "rr-form-label", text: r.label });
+        const val = row.createSpan({ cls: "rr-form-val", text: r.form });
+        val.title = hint;
+        this.attachWordActions(val, stripStress(r.form));
+      }
     }
+    this.renderEnglishTranslations(details);
   }
   renderDefinitions() {
     const dict = this.plugin.dict;
@@ -8256,7 +8261,6 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     const wrap = this.bodyEl.createDiv({ cls: "rr-defs" });
     this.renderForms(wrap);
-    this.renderEnglishTranslations(wrap);
     const defs = this.definitions;
     if (!defs)
       return;
