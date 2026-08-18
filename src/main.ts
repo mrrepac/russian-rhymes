@@ -137,7 +137,7 @@ const RussianRhymesPlugin = class extends Plugin {
       name: t("cmdFollow"),
       callback: () => void this.setFollow(!this.settings.followCursor)
     });
-    // копилка набирается кликами, но разбирать её удобнее с клавиатуры — а на телефоне
+    // копилка набирается правой кнопкой, но разбирать её удобнее с клавиатуры — а на телефоне
     // команды ещё и единственный способ повесить действие на что-то кроме кнопки в панели.
     // checkCallback: пустая копилка — нечего вставлять, команду и показывать незачем
     const withStash = (act: (v: InstanceType<typeof RhymesView>) => void) => (checking: boolean) => {
@@ -228,16 +228,6 @@ const RussianRhymesPlugin = class extends Plugin {
         if (e.shiftKey || e.altKey)
           return;
         if (e.code === "KeyC") {
-          if (this.navArmed) {
-            const view = this.getRhymesView();
-            if (view && view.hasWord()) {
-              e.preventDefault();
-              e.stopPropagation();
-              if (!e.repeat)
-                view.cycleTab(1);
-              return;
-            }
-          }
           if (e.repeat)
             return;
           const ms = this.settings.doubleCopyMs;
@@ -249,7 +239,9 @@ const RussianRhymesPlugin = class extends Plugin {
             const w = this.grabWord();
             if (w) {
               this.navArmed = true;
-              void this.activateView(w);
+              // Двойной Ctrl+C всегда означает новый поиск рифм. Разделы листает
+              // отдельный жест Ctrl+Alt, пока Control остаётся зажатым.
+              void this.activateView(w, "rhymes");
             }
           } else {
             this.lastCopyAt = now;
@@ -418,7 +410,8 @@ const RussianRhymesPlugin = class extends Plugin {
     return range ? editor.getRange(range.from, range.to) : "";
   }
   extractWord(raw: string) {
-    const ws = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
+    const ws = raw.toLowerCase().replace(/[’‘]/g, "'")
+      .match(/[a-z]+(?:['-][a-z]+)*|[а-яё]+(?:-[а-яё]+)*/g);
     return ws && ws.length ? ws[ws.length - 1] : null;
   }
   /**
@@ -629,7 +622,7 @@ const RussianRhymesPlugin = class extends Plugin {
     });
     return claim;
   }
-  async activateView(word: string | null) {
+  async activateView(word: string | null, targetTab?: "rhymes") {
     const leaf = await this.ensureViewInSidebar(true);
     if (!leaf)
       return;
@@ -638,7 +631,7 @@ const RussianRhymesPlugin = class extends Plugin {
     if (!(leaf.view instanceof RhymesView))
       return;
     if (word)
-      await leaf.view.showWord(word);
+      await leaf.view.showWord(word, targetTab);
     else
       leaf.view.focusSearch();
   }

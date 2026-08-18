@@ -111,6 +111,13 @@ export interface Phrases {
   lemma: string | null;
   items: PhraseItem[];
 }
+export interface TranslationGroup {
+  pos: string;
+  words: string[];
+}
+export interface Translations {
+  groups: TranslationGroup[];
+}
 /** Строка files.json релиза словаря: что качать и какого оно размера. */
 interface DictFile {
   name: string;
@@ -230,6 +237,8 @@ const RhymeDict = class {
   phrasesIdx: TextIndex | null;
   sentiment: TextIndex | null;
   semantics: TextIndex | null;
+  translations: TextIndex | null;
+  translationsRuEn: TextIndex | null;
   gen: GenPools | null;
   chars: string[];
   yoMap: Map<string, string>;
@@ -283,6 +292,10 @@ const RhymeDict = class {
     // Оба шарда — «слово\tодин код», оба необязательные: без них просто нет двух фильтров
     this.sentiment = null;
     this.semantics = null;
+    // отдельный англо-русский индекс FreeDict: к русской фонетике не примешивается
+    this.translations = null;
+    // обратный индекс из того же набора: русское слово -> английские заголовки
+    this.translationsRuEn = null;
     // ёфикация ввода: е-написание -> однозначная ё-версия (карта из build-yomap, безопасные пары)
     this.yoMap = /* @__PURE__ */ new Map();
     // личные толковые словари пользователя (DSL): каждый — свой файл local-<id>.txt.gz.
@@ -517,6 +530,8 @@ const RhymeDict = class {
       { name: "phrases", variants: [["phrases.txt.gz"]], load: (raw) => this.phrasesIdx = buildIndex(raw) },
       { name: "sentiment", variants: [["sentiment.txt.gz"]], load: (raw) => this.sentiment = buildIndex(raw) },
       { name: "semantics", variants: [["semantics.txt.gz"]], load: (raw) => this.semantics = buildIndex(raw) },
+      { name: "translations", variants: [["translations.txt.gz"]], load: (raw) => this.translations = buildIndex(raw) },
+      { name: "translationsRuEn", variants: [["translations-ru-en.txt.gz"]], load: (raw) => this.translationsRuEn = buildIndex(raw) },
       { name: "yo", variants: [["yo.txt.gz"]], load: (raw) => this.parseYo(raw) },
       { name: "generator", variants: [["generator.txt.gz"]], load: (raw) => this.gen = this.parseGenerator(raw) }
     ];
@@ -1367,6 +1382,44 @@ const RhymeDict = class {
     if (items.length === 0)
       return null;
     return { lemma: names.join(", "), items };
+  }
+  /** Разобрать одну строку переводного индекса. */
+  translationGroupsAt(idx: TextIndex | null, word: string): TranslationGroup[] {
+    if (!idx)
+      return [];
+    const line = findLine(idx, word + "\t");
+    if (!line)
+      return [];
+    return line.slice(word.length + 1).split("\x1e").map((record) => {
+      const fields = record.split("\x1f");
+      return { pos: fields[0], words: fields.slice(1).filter(Boolean) };
+    }).filter((group) => group.words.length > 0);
+  }
+  /** Английское заголовочное слово → русские переводы, сгруппированные по части речи. */
+  translationsFor(word: string): Translations | null {
+    const groups = this.translationGroupsAt(this.translations, word);
+    return groups.length > 0 ? { groups } : null;
+  }
+  /** Русское слово (или его лемма) → английские переводы из того же FreeDict. */
+  englishTranslationsFor(word: string): Translations | null {
+    const key = word.toLowerCase().replace(/\u0301/g, "");
+    const own = this.translationGroupsAt(this.translationsRuEn, key);
+    if (own.length > 0)
+      return { groups: own };
+    const merged = new Map<string, Set<string>>();
+    for (const lemma of this.lemmasOf(key).slice(0, 2)) {
+      for (const group of this.translationGroupsAt(this.translationsRuEn, lemma)) {
+        let words = merged.get(group.pos);
+        if (!words) {
+          words = new Set();
+          merged.set(group.pos, words);
+        }
+        for (const value of group.words)
+          words.add(value);
+      }
+    }
+    const groups = [...merged].map(([pos, words]) => ({ pos, words: [...words] }));
+    return groups.length > 0 ? { groups } : null;
   }
   stringListAt(idx: TextIndex | null, word: string, sep: string): string[] | null {
     if (!idx)

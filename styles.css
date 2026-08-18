@@ -415,7 +415,9 @@
 
 .rr-forms-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  /* Подписи причастий длинные: в узкой 120px-ячейке они отнимали у формы всю
+     ширину, и слово складывалось в вертикальную колонку по одной букве. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
   gap: 2px var(--size-4-2);
   margin-top: var(--size-2-2);
 }
@@ -428,13 +430,17 @@
 }
 
 .rr-form-label {
-  flex-shrink: 0;
+  min-width: 0;
+  flex-shrink: 1;
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;
 }
 
 .rr-form-val {
+  flex-shrink: 0;
+  white-space: nowrap;
+  word-break: normal;
   cursor: pointer;
   border-radius: var(--radius-s);
   padding: 0 var(--size-2-1);

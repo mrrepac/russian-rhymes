@@ -4857,6 +4857,8 @@ var RhymeDict = class {
     this.phrasesIdx = null;
     this.sentiment = null;
     this.semantics = null;
+    this.translations = null;
+    this.translationsRuEn = null;
     this.yoMap = /* @__PURE__ */ new Map();
     this.local = /* @__PURE__ */ new Map();
     this.localBad = /* @__PURE__ */ new Set();
@@ -5061,6 +5063,8 @@ var RhymeDict = class {
       { name: "phrases", variants: [["phrases.txt.gz"]], load: (raw) => this.phrasesIdx = buildIndex(raw) },
       { name: "sentiment", variants: [["sentiment.txt.gz"]], load: (raw) => this.sentiment = buildIndex(raw) },
       { name: "semantics", variants: [["semantics.txt.gz"]], load: (raw) => this.semantics = buildIndex(raw) },
+      { name: "translations", variants: [["translations.txt.gz"]], load: (raw) => this.translations = buildIndex(raw) },
+      { name: "translationsRuEn", variants: [["translations-ru-en.txt.gz"]], load: (raw) => this.translationsRuEn = buildIndex(raw) },
       { name: "yo", variants: [["yo.txt.gz"]], load: (raw) => this.parseYo(raw) },
       { name: "generator", variants: [["generator.txt.gz"]], load: (raw) => this.gen = this.parseGenerator(raw) }
     ];
@@ -5882,6 +5886,44 @@ var RhymeDict = class {
       return null;
     return { lemma: names.join(", "), items };
   }
+  /** Разобрать одну строку переводного индекса. */
+  translationGroupsAt(idx, word) {
+    if (!idx)
+      return [];
+    const line = findLine(idx, word + "	");
+    if (!line)
+      return [];
+    return line.slice(word.length + 1).split("").map((record) => {
+      const fields = record.split("");
+      return { pos: fields[0], words: fields.slice(1).filter(Boolean) };
+    }).filter((group) => group.words.length > 0);
+  }
+  /** Английское заголовочное слово → русские переводы, сгруппированные по части речи. */
+  translationsFor(word) {
+    const groups = this.translationGroupsAt(this.translations, word);
+    return groups.length > 0 ? { groups } : null;
+  }
+  /** Русское слово (или его лемма) → английские переводы из того же FreeDict. */
+  englishTranslationsFor(word) {
+    const key = word.toLowerCase().replace(/\u0301/g, "");
+    const own = this.translationGroupsAt(this.translationsRuEn, key);
+    if (own.length > 0)
+      return { groups: own };
+    const merged = /* @__PURE__ */ new Map();
+    for (const lemma of this.lemmasOf(key).slice(0, 2)) {
+      for (const group of this.translationGroupsAt(this.translationsRuEn, lemma)) {
+        let words = merged.get(group.pos);
+        if (!words) {
+          words = /* @__PURE__ */ new Set();
+          merged.set(group.pos, words);
+        }
+        for (const value of group.words)
+          words.add(value);
+      }
+    }
+    const groups = [...merged].map(([pos, words]) => ({ pos, words: [...words] }));
+    return groups.length > 0 ? { groups } : null;
+  }
   stringListAt(idx, word, sep) {
     if (!idx)
       return null;
@@ -6060,14 +6102,14 @@ var import_obsidian2 = require("obsidian");
 var en = {
   panelTitle: "Russian Rhymes",
   searchPlaceholder: "double Ctrl+C on a word",
-  dictMissing: "Dictionary files not found. Tap the button below to download them (~76 MB).",
+  dictMissing: "Dictionary files not found. Tap the button below to download them (~78 MB).",
   dictLoading: "Loading dictionary\u2026",
   defsLoading: "Loading meanings and word forms\u2026",
   defsFailed: "Could not load meanings and word forms.",
   dlHeading: "Dictionary download",
   settingUrl: "Dictionary URL",
   settingUrlDesc: "Where to fetch the dictionary from when the dict/ folder is missing (e.g. on mobile). GitHub release base URL.",
-  dlDict: "Download dictionary (~76 MB)",
+  dlDict: "Download dictionary (~78 MB)",
   dlDesc: "Download the dictionary files into the plugin folder (needed on mobile / a fresh install).",
   dlBtn: "Download",
   dlProgress: "Downloading\u2026",
@@ -6101,6 +6143,8 @@ var en = {
   shardAnagrams: "Anagrams",
   shardLemmas: "Lemmas",
   shardPhrases: "Set phrases",
+  shardTranslations: "English\u2013Russian translations",
+  shardTranslationsRuEn: "Russian\u2013English translations",
   shardYo: "Yo restoration",
   shardGenerator: "Word generator",
   copied: "Copied: ",
@@ -6137,6 +6181,20 @@ var en = {
   defWiki: "Wiktionary",
   defSource: "Wiktionary (CC BY-SA)",
   assocSource: "KartaSlov (CC BY-NC-SA)",
+  translationTitle: "Russian translations",
+  translationEnglishTitle: "English translations",
+  translationMissing: "No Russian translation found",
+  translationSource: "FreeDict / WikDict (CC BY-SA 3.0)",
+  transPosProper: "proper noun",
+  transPosPhrase: "phrase",
+  transPosProverb: "proverb",
+  transPosNumeral: "numeral",
+  transPosPreposition: "preposition",
+  transPosPronoun: "pronoun",
+  transPosSuffix: "suffix",
+  transPosConjunction: "conjunction",
+  transPosDeterminer: "determiner",
+  transPosParticle: "particle",
   showMore: "Show more",
   filterAll: "all",
   resetFilters: "reset",
@@ -6183,6 +6241,7 @@ var en = {
   menuFindEnd: "\u201D",
   chipHint: "Click \u2014 copy \xB7 double-click \u2014 find rhymes for it",
   copyHint: "Click \u2014 copy",
+  stashAddHint: "Right-click \u2014 add to the stash",
   settingDouble: "Double Ctrl+C lookup",
   settingDoubleDesc: "Press Ctrl+C twice quickly on a selected word to look it up. Set to 0 to disable.",
   locHeading: "Personal dictionaries (DSL)",
@@ -6278,14 +6337,14 @@ var en = {
 var ru = {
   panelTitle: "\u0420\u0438\u0444\u043C\u044B",
   searchPlaceholder: "\u0434\u0432\u0430\u0436\u0434\u044B Ctrl+C \u043D\u0430 \u0441\u043B\u043E\u0432\u0435",
-  dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~76 \u041C\u0411).",
+  dictMissing: "\u0424\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B. \u041D\u0430\u0436\u043C\u0438\u0442\u0435 \u043A\u043D\u043E\u043F\u043A\u0443 \u043D\u0438\u0436\u0435, \u0447\u0442\u043E\u0431\u044B \u0441\u043A\u0430\u0447\u0430\u0442\u044C \u0438\u0445 (~78 \u041C\u0411).",
   dictLoading: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442\u0441\u044F\u2026",
   defsLoading: "\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u044E\u0442\u0441\u044F \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430\u2026",
   defsFailed: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430.",
   dlHeading: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   settingUrl: "\u0410\u0434\u0440\u0435\u0441 \u0441\u043B\u043E\u0432\u0430\u0440\u044F",
   settingUrlDesc: "\u041E\u0442\u043A\u0443\u0434\u0430 \u0441\u043A\u0430\u0447\u0438\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C, \u0435\u0441\u043B\u0438 \u043F\u0430\u043F\u043A\u0438 dict/ \u043D\u0435\u0442 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u043D\u0430 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0435). \u0411\u0430\u0437\u0430 URL GitHub-\u0440\u0435\u043B\u0438\u0437\u0430.",
-  dlDict: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C (~76 \u041C\u0411)",
+  dlDict: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u0430\u0440\u044C (~78 \u041C\u0411)",
   dlDesc: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C \u0444\u0430\u0439\u043B\u044B \u0441\u043B\u043E\u0432\u0430\u0440\u044F \u0432 \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 (\u043D\u0443\u0436\u043D\u043E \u043D\u0430 \u0442\u0435\u043B\u0435\u0444\u043E\u043D\u0435 / \u043F\u0440\u0438 \u043D\u043E\u0432\u043E\u0439 \u0443\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0435).",
   dlBtn: "\u0421\u043A\u0430\u0447\u0430\u0442\u044C",
   dlProgress: "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u043D\u0438\u0435\u2026",
@@ -6319,6 +6378,8 @@ var ru = {
   shardAnagrams: "\u0410\u043D\u0430\u0433\u0440\u0430\u043C\u043C\u044B",
   shardLemmas: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0435 \u0444\u043E\u0440\u043C\u044B",
   shardPhrases: "\u0423\u0441\u0442\u043E\u0439\u0447\u0438\u0432\u044B\u0435 \u0441\u043E\u0447\u0435\u0442\u0430\u043D\u0438\u044F",
+  shardTranslations: "\u0410\u043D\u0433\u043B\u043E-\u0440\u0443\u0441\u0441\u043A\u0438\u0439 \u0441\u043B\u043E\u0432\u0430\u0440\u044C",
+  shardTranslationsRuEn: "\u0420\u0443\u0441\u0441\u043A\u043E-\u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0439 \u0441\u043B\u043E\u0432\u0430\u0440\u044C",
   shardYo: "\u0401\u0444\u0438\u043A\u0430\u0446\u0438\u044F",
   shardGenerator: "\u0413\u0435\u043D\u0435\u0440\u0430\u0442\u043E\u0440 \u0441\u043B\u043E\u0432",
   copied: "\u0421\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u043D\u043E: ",
@@ -6355,6 +6416,20 @@ var ru = {
   defWiki: "\u0412\u0438\u043A\u0438\u0441\u043B\u043E\u0432\u0430\u0440\u044C",
   defSource: "\u0412\u0438\u043A\u0438\u0441\u043B\u043E\u0432\u0430\u0440\u044C (CC BY-SA)",
   assocSource: "\u041A\u0430\u0440\u0442\u0430\u0421\u043B\u043E\u0432 (CC BY-NC-SA)",
+  translationTitle: "\u041F\u0435\u0440\u0435\u0432\u043E\u0434 \u043D\u0430 \u0440\u0443\u0441\u0441\u043A\u0438\u0439",
+  translationEnglishTitle: "\u041F\u0435\u0440\u0435\u0432\u043E\u0434 \u043D\u0430 \u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0439",
+  translationMissing: "\u041F\u0435\u0440\u0435\u0432\u043E\u0434 \u043D\u0430 \u0440\u0443\u0441\u0441\u043A\u0438\u0439 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D",
+  translationSource: "FreeDict / WikDict (CC BY-SA 3.0)",
+  transPosProper: "\u0438\u043C\u044F \u0441\u043E\u0431\u0441\u0442\u0432.",
+  transPosPhrase: "\u0444\u0440\u0430\u0437\u0430",
+  transPosProverb: "\u043F\u043E\u0441\u043B\u043E\u0432\u0438\u0446\u0430",
+  transPosNumeral: "\u0447\u0438\u0441\u043B\u0438\u0442.",
+  transPosPreposition: "\u043F\u0440\u0435\u0434\u043B\u043E\u0433",
+  transPosPronoun: "\u043C\u0435\u0441\u0442\u043E\u0438\u043C.",
+  transPosSuffix: "\u0441\u0443\u0444\u0444\u0438\u043A\u0441",
+  transPosConjunction: "\u0441\u043E\u044E\u0437",
+  transPosDeterminer: "\u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0438\u0442\u0435\u043B\u044C",
+  transPosParticle: "\u0447\u0430\u0441\u0442\u0438\u0446\u0430",
   showMore: "\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0451",
   filterAll: "\u0432\u0441\u0435",
   resetFilters: "\u0441\u0431\u0440\u043E\u0441\u0438\u0442\u044C",
@@ -6401,6 +6476,7 @@ var ru = {
   menuFindEnd: "\xBB",
   chipHint: "\u041A\u043B\u0438\u043A \u2014 \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C \xB7 \u0434\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A \u2014 \u0438\u0441\u043A\u0430\u0442\u044C \u0440\u0438\u0444\u043C\u044B \u043A \u043D\u0435\u043C\u0443",
   copyHint: "\u041A\u043B\u0438\u043A \u2014 \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u0442\u044C",
+  stashAddHint: "\u041F\u0440\u0430\u0432\u044B\u0439 \u043A\u043B\u0438\u043A \u2014 \u0434\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0432 \u043A\u043E\u043F\u0438\u043B\u043A\u0443",
   settingDouble: "\u041F\u043E\u0438\u0441\u043A \u043F\u043E \u0434\u0432\u043E\u0439\u043D\u043E\u043C\u0443 Ctrl+C",
   settingDoubleDesc: "\u0414\u0432\u0430\u0436\u0434\u044B \u0431\u044B\u0441\u0442\u0440\u043E \u043D\u0430\u0436\u043C\u0438\u0442\u0435 Ctrl+C \u043D\u0430 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043D\u043E\u043C \u0441\u043B\u043E\u0432\u0435, \u0447\u0442\u043E\u0431\u044B \u043D\u0430\u0439\u0442\u0438 \u0435\u0433\u043E. 0 \u2014 \u0432\u044B\u043A\u043B\u044E\u0447\u0438\u0442\u044C.",
   locHeading: "\u041B\u0438\u0447\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430\u0440\u0438 (DSL)",
@@ -6502,6 +6578,11 @@ function t(key) {
 var import_obsidian3 = require("obsidian");
 var VIEW_TYPE_RHYMES = "russian-rhymes-view";
 var stripStress = (s) => s.replace(/́/g, "");
+var queryWord = (raw) => {
+  const words = raw.toLowerCase().replace(/[’‘]/g, "'").match(/[a-z]+(?:['-][a-z]+)*|[а-яё]+(?:-[а-яё]+)*/g);
+  return words && words.length > 0 ? words[words.length - 1] : null;
+};
+var isEnglishWord = (word) => /^[a-z]+(?:['-][a-z]+)*$/.test(word);
 var POS_LABEL = () => ({
   n: t("posN"),
   v: t("posV"),
@@ -6531,6 +6612,8 @@ function shardTitle(name) {
     anagrams: t("shardAnagrams"),
     lemmas: t("shardLemmas"),
     phrases: t("shardPhrases"),
+    translations: t("shardTranslations"),
+    translationsRuEn: t("shardTranslationsRuEn"),
     sentiment: t("shardSentiment"),
     semantics: t("shardSemantics"),
     yo: t("shardYo"),
@@ -6605,6 +6688,7 @@ var LONG_PRESS_SLOP = 10;
 var COPY_NOTICE_MS = 600;
 var insertHint = () => t(import_obsidian3.Platform.isMobile ? "insertHintTouch" : "insertHint");
 var dragHint = () => import_obsidian3.Platform.isMobile ? "" : " \xB7 " + t("dragHint");
+var stashHint = () => import_obsidian3.Platform.isMobile ? "" : " \xB7 " + t("stashAddHint");
 var KIND_HINT = () => ({
   all: t("kindAllHint"),
   exact: t("rhymesHint"),
@@ -6639,6 +6723,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.metagrams = null;
     this.anagrams = null;
     this.definitions = null;
+    this.translations = null;
+    this.englishTranslations = null;
     this.forms = null;
     this.phrases = null;
     this.idioms = null;
@@ -6784,12 +6870,14 @@ var RhymesView = class extends import_obsidian3.ItemView {
     });
   }
   /** Точка входа: показать слово (из двойного Ctrl+C, меню, команды, инпута или двойного клика по чипу). */
-  async showWord(raw) {
+  async showWord(raw, targetTab) {
     let _a, _b;
-    const ms = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
-    if (!ms || ms.length === 0)
+    const query = queryWord(raw);
+    if (!query)
       return;
-    this.word = ms[ms.length - 1];
+    if (targetTab)
+      this.tab = targetTab;
+    this.word = query;
     this.inputEl.value = this.word;
     this.updateClear();
     if (!this.navigating && this.navStack[this.navPos] !== this.word) {
@@ -6815,6 +6903,14 @@ var RhymesView = class extends import_obsidian3.ItemView {
       this.renderMissing();
       return;
     }
+    if (isEnglishWord(this.word)) {
+      this.clearRussianWordData();
+      this.translations = dict.translationsFor(this.word);
+      this.tab = "meaning";
+      this.renderBody();
+      return;
+    }
+    this.translations = null;
     const yo = dict.normalizeYo(this.word);
     if (yo !== this.word) {
       if (this.navStack[this.navPos] === this.word)
@@ -6850,6 +6946,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       return;
     this.definitions = defs;
     this.forms = forms;
+    this.englishTranslations = dict.englishTranslationsFor(this.word);
     this.phrases = dict.phrasesFor(this.word);
     this.idioms = dict.idiomsFor(this.word);
     this.proverbs = dict.proverbsFor(this.word);
@@ -6865,6 +6962,33 @@ var RhymesView = class extends import_obsidian3.ItemView {
         this.tab = content[0];
     }
     this.renderBody();
+  }
+  /** Старые русские результаты не должны просвечивать под английским переводом. */
+  clearRussianWordData() {
+    this.variants = [];
+    this.stress = null;
+    this.all = [];
+    this.consAll = [];
+    this.assonAll = [];
+    this.allitAll = [];
+    this.synonyms = null;
+    this.localSyns = [];
+    this.antonyms = null;
+    this.hypernyms = null;
+    this.hyponyms = null;
+    this.related = null;
+    this.associations = null;
+    this.metagrams = null;
+    this.anagrams = null;
+    this.definitions = null;
+    this.englishTranslations = null;
+    this.forms = null;
+    this.phrases = null;
+    this.idioms = null;
+    this.proverbs = null;
+    this.relatedWords.clear();
+    this.moodMap.clear();
+    this.semMap.clear();
   }
   loadRhymes() {
     this.sectionShown = {};
@@ -7044,13 +7168,15 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Непустые разделы в визуальном порядке — для кнопок и циклической навигации. */
   availableTabs() {
+    if (isEnglishWord(this.word))
+      return ["meaning"];
     const list = [];
     if (this.stress === null) {
       list.push("rhymes");
     } else if (this.all.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
       list.push("rhymes");
     }
-    if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0)
+    if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0 || this.englishTranslations && this.englishTranslations.groups.length > 0)
       list.push("meaning");
     const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 || this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
     if (hasSem)
@@ -7286,7 +7412,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     for (const w of this.stash) {
       const chip = listEl.createSpan({ cls: "rr-chip rr-stash-chip", text: w });
       chip.title = t("stashRemoveHint") + dragHint();
-      this.attachDrag(chip, w, false);
+      this.attachDrag(chip, w);
       chip.addEventListener("click", () => this.stashRemove(w));
     }
     const row = box.createDiv({ cls: "rr-stash-actions" });
@@ -7343,10 +7469,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
   }
   /**
-   * Копилка — слова, которые вы за сессию скопировали или вставили в заметку. Отдельного
-   * жеста «отложить» нет намеренно: свободных жестов у чипа не осталось (клик — копия,
-   * двойной — провал в рифмы, Alt/долгое нажатие — вставка), а на телефоне их и подавно.
-   * Клик по слову и так означает «это я беру» — копилка просто помнит, что вы брали.
+   * Копилка — слова, которые пользователь явно отложил правой кнопкой мыши.
+   * Копирование, вставка и перетаскивание её не меняют: эти жесты отвечают только
+   * за своё прямое действие и больше не имеют скрытого побочного эффекта.
    * Живёт до перезапуска: это черновик под одну песню, а не данные, которым место в data.json
    * и в синхронизации.
    */
@@ -7386,8 +7511,6 @@ var RhymesView = class extends import_obsidian3.ItemView {
         new import_obsidian3.Notice(t("copyFail"));
       else if (!again)
         new import_obsidian3.Notice(t("copied") + w);
-      if (ok)
-        this.stashAdd(w);
     });
   }
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
@@ -7438,7 +7561,6 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (!import_obsidian3.Platform.isMobile)
       editor.focus();
     new import_obsidian3.Notice(t("inserted") + out, 1500);
-    this.stashAdd(text);
   }
   /**
    * Долгое нажатие по слову (телефон, где нет Alt) — вставка в заметку. Возвращает флаг
@@ -7494,9 +7616,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
    * обычный приёмник html5-перетаскивания и вставляет text/plain ровно в ту точку, куда
    * бросили. Поэтому мышью слово можно положить в середину строки, чего не умеют ни
    * копия, ни Alt+клик (тот подменяет слово под курсором).
-   * remember — заносить ли слово в копилку по успешному броску; у самой копилки не надо.
    */
-  attachDrag(el, text, remember = true) {
+  attachDrag(el, text) {
     el.setAttr("draggable", "true");
     el.addEventListener("dragstart", (e) => {
       if (!e.dataTransfer)
@@ -7505,16 +7626,25 @@ var RhymesView = class extends import_obsidian3.ItemView {
       e.dataTransfer.effectAllowed = "copy";
       el.addClass("is-dragging");
     });
-    el.addEventListener("dragend", (e) => {
+    el.addEventListener("dragend", () => {
       el.removeClass("is-dragging");
-      if (remember && e.dataTransfer && e.dataTransfer.dropEffect !== "none")
-        this.stashAdd(text);
+    });
+  }
+  /** Правая кнопка откладывает слово в копилку, не открывая контекстное меню Obsidian. */
+  attachStashAction(el, text) {
+    el.addEventListener("contextmenu", (e) => {
+      if (e.button !== 2)
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.stashAdd(text);
     });
   }
   /** Клик — копировать, Alt+клик или долгое нажатие — вставить в заметку (без поиска по двойному клику). */
   attachCopyInsert(el, text) {
     const lp = this.attachLongPressInsert(el, text);
     this.attachDrag(el, text);
+    this.attachStashAction(el, text);
     el.addEventListener("click", (e) => {
       if (lp.fired) {
         lp.fired = false;
@@ -7532,9 +7662,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
    * висела на каждом взятом слове. Двойной клик теперь просто копирует то слово, в
    * которое проваливается, — второе уведомление гасит copyWord.
    */
-  attachWordActions(el, word) {
+  attachWordActions(el, word, searchWord = word) {
     const lp = this.attachLongPressInsert(el, word);
     this.attachDrag(el, word);
+    this.attachStashAction(el, word);
     el.addEventListener("click", (e) => {
       if (lp.fired) {
         lp.fired = false;
@@ -7545,7 +7676,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       else
         this.copyWord(word);
     });
-    el.addEventListener("dblclick", () => void this.showWord(word));
+    el.addEventListener("dblclick", () => void this.showWord(searchWord));
   }
   /** Погасить отложенные таймеры копирования (при закрытии панели или перерисовке). */
   cancelCopyTimers() {
@@ -7676,6 +7807,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.renderStashRow();
     if (this.plugin.dict.missingShards.length > 0)
       this.renderShardBox(this.bodyEl);
+    if (isEnglishWord(this.word)) {
+      this.renderTranslations();
+      return;
+    }
     if (this.tab === "meaning") {
       this.renderDefinitions();
       return;
@@ -7928,7 +8063,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       lex: [t("lexBase"), t("lexFreq"), t("lexCommon"), t("lexRare")],
       mood: MOOD_LABEL(),
       sem: SEM_LABEL(),
-      hint: `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`,
+      hint: `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`,
       related: t("relatedHint")
     };
   }
@@ -8015,6 +8150,76 @@ var RhymesView = class extends import_obsidian3.ItemView {
     });
     return btn;
   }
+  /** Подписи частей речи FreeDict совпадают в обоих направлениях перевода. */
+  translationPosLabels() {
+    const basePos = POS_LABEL();
+    return {
+      n: basePos.n,
+      v: basePos.v,
+      adj: basePos.a,
+      adv: basePos.d,
+      interjection: basePos.i,
+      pn: t("transPosProper"),
+      phraseologicalunit: t("transPosPhrase"),
+      proverb: t("transPosProverb"),
+      numeral: t("transPosNumeral"),
+      preposition: t("transPosPreposition"),
+      pronoun: t("transPosPronoun"),
+      suffix: t("transPosSuffix"),
+      conjunction: t("transPosConjunction"),
+      determiner: t("transPosDeterminer"),
+      particle: t("transPosParticle")
+    };
+  }
+  /** Английское слово: русские варианты перевода, каждый ведёт обратно к рифмовнику. */
+  renderTranslations() {
+    const data = this.translations;
+    if (!data || data.groups.length === 0) {
+      this.bodyEl.createDiv({ cls: "rr-status", text: t("translationMissing") });
+      return;
+    }
+    const wrap = this.bodyEl.createDiv({ cls: "rr-defs rr-translations" });
+    wrap.createDiv({ cls: "rr-def-pos is-wiki", text: t("translationTitle") });
+    const labels = this.translationPosLabels();
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
+    for (const group of data.groups) {
+      const box = wrap.createDiv({ cls: "rr-def-group" });
+      if (group.pos)
+        box.createDiv({ cls: "rr-def-pos", text: labels[group.pos] || group.pos });
+      const list = box.createDiv({ cls: "rr-list" });
+      for (const translation of group.words) {
+        const copyText = stripStress(translation);
+        const words = copyText.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g) || [];
+        const target = words.find((w) => w.length > 2 && !!this.plugin.dict.lookup(w)) || words.find((w) => w.length > 2) || words[0] || "";
+        const chip = list.createSpan({ cls: "rr-chip", text: translation });
+        chip.title = hint;
+        this.attachWordActions(chip, copyText, target || copyText);
+      }
+    }
+    wrap.createDiv({ cls: "rr-def-src", text: t("translationSource") });
+  }
+  /** Русское слово: английские варианты из обратного индекса FreeDict. */
+  renderEnglishTranslations(host) {
+    const data = this.englishTranslations;
+    if (!data || data.groups.length === 0)
+      return;
+    const section = host.createDiv({ cls: "rr-translations" });
+    section.createDiv({ cls: "rr-def-pos is-wiki", text: t("translationEnglishTitle") });
+    const labels = this.translationPosLabels();
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
+    for (const group of data.groups) {
+      const box = section.createDiv({ cls: "rr-def-group" });
+      if (group.pos)
+        box.createDiv({ cls: "rr-def-pos", text: labels[group.pos] || group.pos });
+      const list = box.createDiv({ cls: "rr-list" });
+      for (const translation of group.words) {
+        const chip = list.createSpan({ cls: "rr-chip", text: translation });
+        chip.title = hint;
+        this.attachWordActions(chip, translation);
+      }
+    }
+    section.createDiv({ cls: "rr-def-src", text: t("translationSource") });
+  }
   /** Сворачиваемая таблица словоформ с ударениями — вверху вкладки «Значение». */
   renderForms(host) {
     const f = this.forms;
@@ -8026,13 +8231,13 @@ var RhymesView = class extends import_obsidian3.ItemView {
       text: t("formsTitle") + (f.lemma ? " \u2192 " + f.lemma : "")
     });
     const grid = details.createDiv({ cls: "rr-forms-grid" });
-    const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
     for (const r of f.rows) {
       const row = grid.createDiv({ cls: "rr-form-row" });
       row.createSpan({ cls: "rr-form-label", text: r.label });
       const val = row.createSpan({ cls: "rr-form-val", text: r.form });
       val.title = hint;
-      this.attachCopyInsert(val, stripStress(r.form));
+      this.attachWordActions(val, stripStress(r.form));
     }
   }
   renderDefinitions() {
@@ -8051,6 +8256,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     const wrap = this.bodyEl.createDiv({ cls: "rr-defs" });
     this.renderForms(wrap);
+    this.renderEnglishTranslations(wrap);
     const defs = this.definitions;
     if (!defs)
       return;
@@ -8112,7 +8318,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   chipGroup(wrap, words) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
-    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`;
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
     for (const w of words) {
       const chip = row.createSpan({ cls: "rr-chip", text: w });
       chip.title = hint;
@@ -8165,7 +8371,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (ph && ph.items.length > 0) {
       any = true;
       this.semSection(wrap, "phrases", t("tabPhrases") + lemmaSuffix(ph.lemma), ph.items.length, (b) => {
-        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
         for (const it of ph.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it.phrase });
@@ -8181,7 +8387,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (prov && prov.items.length > 0) {
       any = true;
       this.semSection(wrap, "prov", t("secProverbs") + lemmaSuffix(prov.lemma), prov.items.length, (b) => {
-        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
         for (const it of prov.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it });
@@ -8641,16 +8847,6 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
         if (e.shiftKey || e.altKey)
           return;
         if (e.code === "KeyC") {
-          if (this.navArmed) {
-            const view = this.getRhymesView();
-            if (view && view.hasWord()) {
-              e.preventDefault();
-              e.stopPropagation();
-              if (!e.repeat)
-                view.cycleTab(1);
-              return;
-            }
-          }
           if (e.repeat)
             return;
           const ms = this.settings.doubleCopyMs;
@@ -8662,7 +8858,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
             const w = this.grabWord();
             if (w) {
               this.navArmed = true;
-              void this.activateView(w);
+              void this.activateView(w, "rhymes");
             }
           } else {
             this.lastCopyAt = now;
@@ -8810,7 +9006,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     return range ? editor.getRange(range.from, range.to) : "";
   }
   extractWord(raw) {
-    const ws = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
+    const ws = raw.toLowerCase().replace(/[’‘]/g, "'").match(/[a-z]+(?:['-][a-z]+)*|[а-яё]+(?:-[а-яё]+)*/g);
     return ws && ws.length ? ws[ws.length - 1] : null;
   }
   /**
@@ -9010,7 +9206,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     });
     return claim;
   }
-  async activateView(word) {
+  async activateView(word, targetTab) {
     const leaf = await this.ensureViewInSidebar(true);
     if (!leaf)
       return;
@@ -9019,7 +9215,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     if (!(leaf.view instanceof RhymesView))
       return;
     if (word)
-      await leaf.view.showWord(word);
+      await leaf.view.showWord(word, targetTab);
     else
       leaf.view.focusSearch();
   }

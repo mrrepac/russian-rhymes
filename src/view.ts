@@ -1,7 +1,7 @@
 import { ItemView, Menu, Notice, Platform, setIcon } from "obsidian";
 import type { Editor, WorkspaceLeaf } from "obsidian";
 import { VOWELS, countSyllables, looksSameRoot, markStress } from "./phonetics";
-import type { Definitions, Forms, GenCat, LocalSynDict, Phrases, RhymeEntry, ShardInfo, StressVariant, StringList, Synonyms } from "./dict";
+import type { Definitions, Forms, GenCat, LocalSynDict, Phrases, RhymeEntry, ShardInfo, StressVariant, StringList, Synonyms, Translations } from "./dict";
 import type { RhymeDict } from "./dict";
 import type { RhymesSettings } from "./main";
 import { t } from "./i18n";
@@ -43,6 +43,12 @@ interface HostPlugin {
 
 const VIEW_TYPE_RHYMES = "russian-rhymes-view";
 const stripStress = (s: string) => s.replace(/́/g, "");
+const queryWord = (raw: string) => {
+  const words = raw.toLowerCase().replace(/[’‘]/g, "'")
+    .match(/[a-z]+(?:['-][a-z]+)*|[а-яё]+(?:-[а-яё]+)*/g);
+  return words && words.length > 0 ? words[words.length - 1] : null;
+};
+const isEnglishWord = (word: string) => /^[a-z]+(?:['-][a-z]+)*$/.test(word);
 const POS_LABEL = (): Record<string, string> => ({
   n: t("posN"),
   v: t("posV"),
@@ -82,6 +88,8 @@ function shardTitle(name: string) {
     anagrams: t("shardAnagrams"),
     lemmas: t("shardLemmas"),
     phrases: t("shardPhrases"),
+    translations: t("shardTranslations"),
+    translationsRuEn: t("shardTranslationsRuEn"),
     sentiment: t("shardSentiment"),
     semantics: t("shardSemantics"),
     yo: t("shardYo"),
@@ -177,6 +185,8 @@ const COPY_NOTICE_MS = 600;
 const insertHint = () => t(Platform.isMobile ? "insertHintTouch" : "insertHint");
 // перетаскивание — мышиный жест: на телефоне о нём говорить незачем
 const dragHint = () => Platform.isMobile ? "" : " \xB7 " + t("dragHint");
+// правая кнопка есть только на десктопе; на телефоне долгое нажатие занято вставкой
+const stashHint = () => Platform.isMobile ? "" : " \xB7 " + t("stashAddHint");
 // подсказка к кнопке «качество»: чем один вид созвучия отличается от другого
 const KIND_HINT = (): Partial<Record<SoundKind, string>> => ({
   all: t("kindAllHint"),
@@ -214,6 +224,8 @@ const RhymesView = class extends ItemView {
   metagrams: Synonyms | null;
   anagrams: Synonyms | null;
   definitions: Definitions | null;
+  translations: Translations | null;
+  englishTranslations: Translations | null;
   forms: Forms | null;
   phrases: Phrases | null;
   idioms: StringList | null;
@@ -295,6 +307,8 @@ const RhymesView = class extends ItemView {
     this.metagrams = null;
     this.anagrams = null;
     this.definitions = null;
+    this.translations = null;
+    this.englishTranslations = null;
     this.forms = null;
     this.phrases = null;
     this.idioms = null;
@@ -459,12 +473,14 @@ const RhymesView = class extends ItemView {
     });
   }
   /** Точка входа: показать слово (из двойного Ctrl+C, меню, команды, инпута или двойного клика по чипу). */
-  async showWord(raw: string) {
+  async showWord(raw: string, targetTab?: TabId) {
     let _a, _b;
-    const ms = raw.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g);
-    if (!ms || ms.length === 0)
+    const query = queryWord(raw);
+    if (!query)
       return;
-    this.word = ms[ms.length - 1];
+    if (targetTab)
+      this.tab = targetTab;
+    this.word = query;
     this.inputEl.value = this.word;
     this.updateClear();
     if (!this.navigating && this.navStack[this.navPos] !== this.word) {
@@ -496,6 +512,16 @@ const RhymesView = class extends ItemView {
       this.renderMissing();
       return;
     }
+    if (isEnglishWord(this.word)) {
+      this.clearRussianWordData();
+      this.translations = dict.translationsFor(this.word);
+      // У английского запроса нет русских рифм до выбора перевода: показываем перевод,
+      // а двойной клик по русскому варианту уже возвращает обычный режим рифмовника.
+      this.tab = "meaning";
+      this.renderBody();
+      return;
+    }
+    this.translations = null;
     const yo = dict.normalizeYo(this.word);
     if (yo !== this.word) {
       if (this.navStack[this.navPos] === this.word)
@@ -531,6 +557,7 @@ const RhymesView = class extends ItemView {
       return;
     this.definitions = defs;
     this.forms = forms;
+    this.englishTranslations = dict.englishTranslationsFor(this.word);
     this.phrases = dict.phrasesFor(this.word);
     this.idioms = dict.idiomsFor(this.word);
     this.proverbs = dict.proverbsFor(this.word);
@@ -546,6 +573,33 @@ const RhymesView = class extends ItemView {
         this.tab = content[0];
     }
     this.renderBody();
+  }
+  /** Старые русские результаты не должны просвечивать под английским переводом. */
+  clearRussianWordData() {
+    this.variants = [];
+    this.stress = null;
+    this.all = [];
+    this.consAll = [];
+    this.assonAll = [];
+    this.allitAll = [];
+    this.synonyms = null;
+    this.localSyns = [];
+    this.antonyms = null;
+    this.hypernyms = null;
+    this.hyponyms = null;
+    this.related = null;
+    this.associations = null;
+    this.metagrams = null;
+    this.anagrams = null;
+    this.definitions = null;
+    this.englishTranslations = null;
+    this.forms = null;
+    this.phrases = null;
+    this.idioms = null;
+    this.proverbs = null;
+    this.relatedWords.clear();
+    this.moodMap.clear();
+    this.semMap.clear();
   }
   loadRhymes() {
     this.sectionShown = {};
@@ -727,6 +781,8 @@ const RhymesView = class extends ItemView {
   }
   /** Непустые разделы в визуальном порядке — для кнопок и циклической навигации. */
   availableTabs() {
+    if (isEnglishWord(this.word))
+      return ["meaning"] as TabId[];
     const list: TabId[] = [];
     if (this.stress === null) {
       list.push("rhymes");
@@ -735,7 +791,7 @@ const RhymesView = class extends ItemView {
     }
     // пока вторая волна не приехала, про формы и толкования ничего не известно — вкладку
     // держим доступной, иначе до неё нельзя было бы дотянуться, чтобы её же и загрузить
-    if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0)
+    if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0 || this.englishTranslations && this.englishTranslations.groups.length > 0)
       list.push("meaning");
     const hasSem = this.localSyns.length > 0 || this.synonyms && this.synonyms.groups.length > 0 || this.antonyms && this.antonyms.groups.length > 0 || this.hypernyms && this.hypernyms.groups.length > 0 || this.hyponyms && this.hyponyms.groups.length > 0 || this.related && this.related.groups.length > 0 || this.idioms && this.idioms.items.length > 0 || this.phrases && this.phrases.items.length > 0 || this.proverbs && this.proverbs.items.length > 0 || this.associations && this.associations.groups.length > 0 || this.metagrams && this.metagrams.groups.length > 0 || this.anagrams && this.anagrams.groups.length > 0;
     if (hasSem)
@@ -977,10 +1033,9 @@ const RhymesView = class extends ItemView {
     for (const w of this.stash) {
       const chip = listEl.createSpan({ cls: "rr-chip rr-stash-chip", text: w });
       chip.title = t("stashRemoveHint") + dragHint();
-      // копилка — то место, откуда слово тащат в текст: она и собрана из уже взятого.
-      // Заносить обратно в неё же нечего, поэтому remember=false
-      this.attachDrag(chip, w, false);
-      // клик убирает: копилка набирается кликами, и разбирается пусть так же
+      // Из копилки слово можно утащить в текст, не меняя сам список.
+      this.attachDrag(chip, w);
+      // обычный клик по слову внутри копилки убирает его из списка
       chip.addEventListener("click", () => this.stashRemove(w));
     }
     const row = box.createDiv({ cls: "rr-stash-actions" });
@@ -1040,10 +1095,9 @@ const RhymesView = class extends ItemView {
     }
   }
   /**
-   * Копилка — слова, которые вы за сессию скопировали или вставили в заметку. Отдельного
-   * жеста «отложить» нет намеренно: свободных жестов у чипа не осталось (клик — копия,
-   * двойной — провал в рифмы, Alt/долгое нажатие — вставка), а на телефоне их и подавно.
-   * Клик по слову и так означает «это я беру» — копилка просто помнит, что вы брали.
+   * Копилка — слова, которые пользователь явно отложил правой кнопкой мыши.
+   * Копирование, вставка и перетаскивание её не меняют: эти жесты отвечают только
+   * за своё прямое действие и больше не имеют скрытого побочного эффекта.
    * Живёт до перезапуска: это черновик под одну песню, а не данные, которым место в data.json
    * и в синхронизации.
    */
@@ -1086,8 +1140,6 @@ const RhymesView = class extends ItemView {
         new Notice(t("copyFail"));
       else if (!again)
         new Notice(t("copied") + w);
-      if (ok)
-        this.stashAdd(w);
     });
   }
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
@@ -1138,7 +1190,6 @@ const RhymesView = class extends ItemView {
     if (!Platform.isMobile)
       editor.focus();
     new Notice(t("inserted") + out, 1500);
-    this.stashAdd(text);
   }
   /**
    * Долгое нажатие по слову (телефон, где нет Alt) — вставка в заметку. Возвращает флаг
@@ -1200,9 +1251,8 @@ const RhymesView = class extends ItemView {
    * обычный приёмник html5-перетаскивания и вставляет text/plain ровно в ту точку, куда
    * бросили. Поэтому мышью слово можно положить в середину строки, чего не умеют ни
    * копия, ни Alt+клик (тот подменяет слово под курсором).
-   * remember — заносить ли слово в копилку по успешному броску; у самой копилки не надо.
    */
-  attachDrag(el: HTMLElement, text: string, remember = true) {
+  attachDrag(el: HTMLElement, text: string) {
     el.setAttr("draggable", "true");
     el.addEventListener("dragstart", (e: DragEvent) => {
       if (!e.dataTransfer)
@@ -1211,17 +1261,26 @@ const RhymesView = class extends ItemView {
       e.dataTransfer.effectAllowed = "copy";
       el.addClass("is-dragging");
     });
-    el.addEventListener("dragend", (e: DragEvent) => {
+    el.addEventListener("dragend", () => {
       el.removeClass("is-dragging");
-      // «none» — бросили мимо (в пустоту, в другое окно): считать это взятым словом нельзя
-      if (remember && e.dataTransfer && e.dataTransfer.dropEffect !== "none")
-        this.stashAdd(text);
+    });
+  }
+  /** Правая кнопка откладывает слово в копилку, не открывая контекстное меню Obsidian. */
+  attachStashAction(el: HTMLElement, text: string) {
+    el.addEventListener("contextmenu", (e: MouseEvent) => {
+      // contextmenu бывает и после долгого касания; кнопка 2 отсекает этот мобильный случай
+      if (e.button !== 2)
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.stashAdd(text);
     });
   }
   /** Клик — копировать, Alt+клик или долгое нажатие — вставить в заметку (без поиска по двойному клику). */
   attachCopyInsert(el: HTMLElement, text: string) {
     const lp = this.attachLongPressInsert(el, text);
     this.attachDrag(el, text);
+    this.attachStashAction(el, text);
     el.addEventListener("click", (e: MouseEvent) => {
       if (lp.fired) {
         lp.fired = false;
@@ -1239,9 +1298,10 @@ const RhymesView = class extends ItemView {
    * висела на каждом взятом слове. Двойной клик теперь просто копирует то слово, в
    * которое проваливается, — второе уведомление гасит copyWord.
    */
-  attachWordActions(el: HTMLElement, word: string) {
+  attachWordActions(el: HTMLElement, word: string, searchWord = word) {
     const lp = this.attachLongPressInsert(el, word);
     this.attachDrag(el, word);
+    this.attachStashAction(el, word);
     el.addEventListener("click", (e: MouseEvent) => {
       if (lp.fired) {
         lp.fired = false;
@@ -1252,7 +1312,7 @@ const RhymesView = class extends ItemView {
       else
         this.copyWord(word);
     });
-    el.addEventListener("dblclick", () => void this.showWord(word));
+    el.addEventListener("dblclick", () => void this.showWord(searchWord));
   }
   /** Погасить отложенные таймеры копирования (при закрытии панели или перерисовке). */
   cancelCopyTimers() {
@@ -1392,6 +1452,10 @@ const RhymesView = class extends ItemView {
     // строки нет вовсе, чтобы не мозолить глаза
     if (this.plugin.dict.missingShards.length > 0)
       this.renderShardBox(this.bodyEl);
+    if (isEnglishWord(this.word)) {
+      this.renderTranslations();
+      return;
+    }
     if (this.tab === "meaning") {
       this.renderDefinitions();
       return;
@@ -1665,7 +1729,7 @@ const RhymesView = class extends ItemView {
       lex: [t("lexBase"), t("lexFreq"), t("lexCommon"), t("lexRare")],
       mood: MOOD_LABEL(),
       sem: SEM_LABEL(),
-      hint: `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`,
+      hint: `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`,
       related: t("relatedHint")
     };
   }
@@ -1757,6 +1821,77 @@ const RhymesView = class extends ItemView {
     });
     return btn;
   }
+  /** Подписи частей речи FreeDict совпадают в обоих направлениях перевода. */
+  translationPosLabels(): Record<string, string> {
+    const basePos = POS_LABEL();
+    return {
+      n: basePos.n,
+      v: basePos.v,
+      adj: basePos.a,
+      adv: basePos.d,
+      interjection: basePos.i,
+      pn: t("transPosProper"),
+      phraseologicalunit: t("transPosPhrase"),
+      proverb: t("transPosProverb"),
+      numeral: t("transPosNumeral"),
+      preposition: t("transPosPreposition"),
+      pronoun: t("transPosPronoun"),
+      suffix: t("transPosSuffix"),
+      conjunction: t("transPosConjunction"),
+      determiner: t("transPosDeterminer"),
+      particle: t("transPosParticle")
+    };
+  }
+  /** Английское слово: русские варианты перевода, каждый ведёт обратно к рифмовнику. */
+  renderTranslations() {
+    const data = this.translations;
+    if (!data || data.groups.length === 0) {
+      this.bodyEl.createDiv({ cls: "rr-status", text: t("translationMissing") });
+      return;
+    }
+    const wrap = this.bodyEl.createDiv({ cls: "rr-defs rr-translations" });
+    wrap.createDiv({ cls: "rr-def-pos is-wiki", text: t("translationTitle") });
+    const labels = this.translationPosLabels();
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
+    for (const group of data.groups) {
+      const box = wrap.createDiv({ cls: "rr-def-group" });
+      if (group.pos)
+        box.createDiv({ cls: "rr-def-pos", text: labels[group.pos] || group.pos });
+      const list = box.createDiv({ cls: "rr-list" });
+      for (const translation of group.words) {
+        const copyText = stripStress(translation);
+        const words = copyText.toLowerCase().match(/[а-яё]+(?:-[а-яё]+)*/g) || [];
+        const target = words.find((w) => w.length > 2 && !!this.plugin.dict.lookup(w)) ||
+          words.find((w) => w.length > 2) || words[0] || "";
+        const chip = list.createSpan({ cls: "rr-chip", text: translation });
+        chip.title = hint;
+        this.attachWordActions(chip, copyText, target || copyText);
+      }
+    }
+    wrap.createDiv({ cls: "rr-def-src", text: t("translationSource") });
+  }
+  /** Русское слово: английские варианты из обратного индекса FreeDict. */
+  renderEnglishTranslations(host: HTMLElement) {
+    const data = this.englishTranslations;
+    if (!data || data.groups.length === 0)
+      return;
+    const section = host.createDiv({ cls: "rr-translations" });
+    section.createDiv({ cls: "rr-def-pos is-wiki", text: t("translationEnglishTitle") });
+    const labels = this.translationPosLabels();
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
+    for (const group of data.groups) {
+      const box = section.createDiv({ cls: "rr-def-group" });
+      if (group.pos)
+        box.createDiv({ cls: "rr-def-pos", text: labels[group.pos] || group.pos });
+      const list = box.createDiv({ cls: "rr-list" });
+      for (const translation of group.words) {
+        const chip = list.createSpan({ cls: "rr-chip", text: translation });
+        chip.title = hint;
+        this.attachWordActions(chip, translation);
+      }
+    }
+    section.createDiv({ cls: "rr-def-src", text: t("translationSource") });
+  }
   /** Сворачиваемая таблица словоформ с ударениями — вверху вкладки «Значение». */
   renderForms(host: HTMLElement) {
     const f = this.forms;
@@ -1768,13 +1903,13 @@ const RhymesView = class extends ItemView {
       text: t("formsTitle") + (f.lemma ? " \u2192 " + f.lemma : "")
     });
     const grid = details.createDiv({ cls: "rr-forms-grid" });
-    const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
     for (const r of f.rows) {
       const row = grid.createDiv({ cls: "rr-form-row" });
       row.createSpan({ cls: "rr-form-label", text: r.label });
       const val = row.createSpan({ cls: "rr-form-val", text: r.form });
       val.title = hint;
-      this.attachCopyInsert(val, stripStress(r.form));
+      this.attachWordActions(val, stripStress(r.form));
     }
   }
   renderDefinitions() {
@@ -1794,6 +1929,7 @@ const RhymesView = class extends ItemView {
     }
     const wrap = this.bodyEl.createDiv({ cls: "rr-defs" });
     this.renderForms(wrap);
+    this.renderEnglishTranslations(wrap);
     const defs = this.definitions;
     if (!defs)
       return;
@@ -1857,7 +1993,7 @@ const RhymesView = class extends ItemView {
   }
   chipGroup(wrap: HTMLElement, words: string[]) {
     const row = wrap.createDiv({ cls: "rr-syn-group" });
-    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}`;
+    const hint = `${t("chipHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
     for (const w of words) {
       const chip = row.createSpan({ cls: "rr-chip", text: w });
       chip.title = hint;
@@ -1910,7 +2046,7 @@ const RhymesView = class extends ItemView {
     if (ph && ph.items.length > 0) {
       any = true;
       this.semSection(wrap, "phrases", t("tabPhrases") + lemmaSuffix(ph.lemma), ph.items.length, (b) => {
-        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
         for (const it of ph.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it.phrase });
@@ -1926,7 +2062,7 @@ const RhymesView = class extends ItemView {
     if (prov && prov.items.length > 0) {
       any = true;
       this.semSection(wrap, "prov", t("secProverbs") + lemmaSuffix(prov.lemma), prov.items.length, (b) => {
-        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}`;
+        const hint = `${t("copyHint")} \xB7 ${insertHint()}${dragHint()}${stashHint()}`;
         for (const it of prov.items) {
           const prow = b.createDiv({ cls: "rr-phrase" });
           const pt = prow.createSpan({ cls: "rr-phrase-text", text: it });
