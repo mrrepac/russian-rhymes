@@ -4246,45 +4246,6 @@ var ungzip_1 = ungzip;
 
 // src/phonetics.js
 var VOWELS = "\u0430\u0435\u0451\u0438\u043E\u0443\u044B\u044D\u044E\u044F";
-function vowelSkeleton(s) {
-  let out = "";
-  for (const c of s)
-    if (VOWELS.includes(c))
-      out += c;
-  return out;
-}
-var CONS_CLASS = {
-  \u043F: "T",
-  \u0431: "T",
-  \u0442: "T",
-  \u0434: "T",
-  \u043A: "T",
-  \u0433: "T",
-  \u0444: "S",
-  \u0432: "S",
-  \u0441: "S",
-  \u0437: "S",
-  \u0448: "S",
-  \u0436: "S",
-  \u0445: "S",
-  \u0449: "S",
-  \u0446: "C",
-  \u0447: "C",
-  \u043C: "N",
-  \u043D: "N",
-  \u043B: "L",
-  \u0440: "L",
-  \u0439: "J"
-};
-function consonantSkeleton(s) {
-  let out = "";
-  for (const c of s) {
-    const cl = CONS_CLASS[c];
-    if (cl)
-      out += cl;
-  }
-  return out;
-}
 function countSyllables(w) {
   let n = 0;
   for (const c of w)
@@ -4292,8 +4253,16 @@ function countSyllables(w) {
       n++;
   return n;
 }
+var CONS = "\u043F\u0431\u0442\u0434\u043A\u0433\u0444\u0432\u0441\u0437\u0448\u0436\u0445\u0446\u0447\u0449\u043C\u043D\u043B\u0440\u0439";
+var KEY_VOWELS = "\u0430\u043E\u0443\u044B\u0438\u044D\u044A";
+var ALWAYS_SOFT = "\u0447\u0449\u0439";
+var ALWAYS_HARD = "\u0436\u0448\u0446";
+var SOFT_SERIES = "\u044F\u0435\u0451\u044E\u0438";
+var VOWEL_QUALITY = { \u0430: "\u0430", \u044F: "\u0430", \u043E: "\u043E", \u0451: "\u043E", \u0443: "\u0443", \u044E: "\u0443", \u044B: "\u044B", \u0438: "\u0438", \u044D: "\u044D", \u0435: "\u044D" };
 var DEVOICE = { \u0431: "\u043F", \u0432: "\u0444", \u0433: "\u043A", \u0434: "\u0442", \u0436: "\u0448", \u0437: "\u0441" };
+var VOICE = { \u043F: "\u0431", \u0444: "\u0432", \u043A: "\u0433", \u0442: "\u0434", \u0448: "\u0436", \u0441: "\u0437" };
 var VOICELESS = "\u043F\u0444\u043A\u0442\u0448\u0441\u0445\u0446\u0447\u0449";
+var VOICING = "\u0431\u0433\u0434\u0436\u0437";
 var OGO_KEEP_G = /* @__PURE__ */ new Set([
   "\u043C\u043D\u043E\u0433\u043E",
   "\u043D\u0435\u043C\u043D\u043E\u0433\u043E",
@@ -4308,57 +4277,333 @@ var OGO_KEEP_G = /* @__PURE__ */ new Set([
   "\u043F\u043E\u043B\u043E\u0433\u043E",
   "\u043E\u0442\u043B\u043E\u0433\u043E"
 ]);
-function rhymeKey(word, stressIdx) {
-  let tail = word.slice(stressIdx);
-  const head = word.slice(0, stressIdx);
-  tail = tail.replace(/ться$/, "\u0446\u0430").replace(/тся$/, "\u0446\u0430");
-  if (!OGO_KEEP_G.has(word))
-    tail = tail.replace(/([ое])го$/, "$1\u0432\u043E");
-  tail = tail.replace(/рдц/g, "\u0440\u0446").replace(/лнц/g, "\u043D\u0446").replace(/стн/g, "\u0441\u043D").replace(/здн/g, "\u0437\u043D").replace(/вств/g, "\u0441\u0442\u0432").replace(/стл/g, "\u0441\u043B").replace(/нтг/g, "\u043D\u0433");
-  tail = tail.replace(/[сз]ч/g, "\u0449").replace(/[тд]ч/g, "\u0447");
-  const chars = [...tail];
-  const out = [];
-  for (let i = 0; i < chars.length; i++) {
-    let c = chars[i];
-    let atEnd = true;
-    for (let j = i + 1; j < chars.length; j++)
-      if (chars[j] !== "\u044C" && chars[j] !== "\u044A") {
-        atEnd = false;
+var SH_WORDS = /^(?:(?:ни|кое-)?что(?:бы|-то|-нибудь|-либо)?|конечно|скучн\S*|нарочн\S*|яичниц\S*|скворечн\S*|прачечн\S*|горчичник\S*)$/;
+var CLUSTERS = [
+  [/вств/g, "\u0441\u0442\u0432"],
+  [/здн/g, "\u0437\u043D"],
+  [/стн/g, "\u0441\u043D"],
+  [/стл/g, "\u0441\u043B"],
+  [/лнц/g, "\u043D\u0446"],
+  [/рдц/g, "\u0440\u0446"],
+  [/[нд]тск/g, "\u043D\u0441\u043A"],
+  [/ндск/g, "\u043D\u0441\u043A"],
+  [/стск/g, "\u0441\u043A"],
+  [/нтг/g, "\u043D\u0433"],
+  [/[сзж]ч/g, "\u0449"],
+  [/[тд]ч/g, "\u0447"],
+  [/[тд]ь?с(?=[кт])/g, "\u0446"],
+  [/[сз]ш/g, "\u0448"],
+  [/[сз]ж/g, "\u0436"],
+  [/г(?=[кч])/g, "\u0445"]
+];
+function transcribe(word, stressIdx) {
+  let w = word.toLowerCase();
+  if (!VOWELS.includes(w[stressIdx])) {
+    stressIdx = -1;
+    for (let i = 0; i < w.length; i++)
+      if (VOWELS.includes(w[i])) {
+        stressIdx = i;
         break;
       }
-    const next = chars[i + 1];
-    if (DEVOICE[c] && (atEnd || next && VOICELESS.includes(next)))
-      c = DEVOICE[c];
-    if (c === "\u0438" && out.length && "\u0436\u0448\u0446".includes(out[out.length - 1]))
-      c = "\u044B";
-    if (c === "\u0435" && out.length && "\u0436\u0448\u0446".includes(out[out.length - 1]))
-      c = "\u044D";
-    out.push(c);
   }
-  const t2 = out.join("");
-  const first = t2[0];
-  const rest = [...t2.slice(1)].map((ch) => {
-    if (ch === "\u043E" || ch === "\u0430")
-      return "\u0430";
-    if (ch === "\u0435" || ch === "\u0438" || ch === "\u044F")
-      return "\u0438";
-    if (ch === "\u0451")
-      return "\u043E";
-    return ch;
-  }).join("");
-  const stressed = first === "\u0451" ? "\u043E" : first;
-  const key = (stressed + rest).replace(/([жшчщц])ь$/, "$1");
-  let support = "";
-  for (let i = head.length - 1; i >= 0; i--) {
-    const ch = head[i];
-    if (ch === "\u044C" || ch === "\u044A")
+  if (stressIdx >= 0)
+    w = w.slice(0, stressIdx + 1) + "+" + w.slice(stressIdx + 1);
+  if (!OGO_KEEP_G.has(word))
+    w = w.replace(/([ое]\+?)го(\+?)$/, "$1\u0432\u043E$2");
+  if (SH_WORDS.test(word))
+    w = w.replace(/ч(?=[нт])/g, "\u0448");
+  w = w.replace(/ть?ся$/, "\u0446\u0430");
+  for (const [re, to] of CLUSTERS)
+    w = w.replace(re, to);
+  const toks = [];
+  let st = -1;
+  let sep = true;
+  for (let i = 0; i < w.length; i++) {
+    const c = w[i];
+    if (c === "+")
       continue;
-    if (VOWELS.includes(ch))
-      break;
-    support = ch;
-    break;
+    const prev = toks[toks.length - 1];
+    if (VOWELS.includes(c)) {
+      const soft = SOFT_SERIES.includes(c);
+      const afterCons = prev && !prev.v && !sep;
+      if (soft && afterCons && !ALWAYS_HARD.includes(prev.b))
+        prev.s = true;
+      if (soft && c !== "\u0438" && (!prev || prev.v || sep))
+        toks.push({ v: false, b: "\u0439", s: true });
+      else if (c === "\u0438" && sep && prev && !prev.v)
+        toks.push({ v: false, b: "\u0439", s: true });
+      let q = VOWEL_QUALITY[c];
+      if (q === "\u0438" && afterCons && ALWAYS_HARD.includes(prev.b))
+        q = "\u044B";
+      if (w[i + 1] === "+")
+        st = toks.length;
+      toks.push({ v: true, b: q, s: false });
+      sep = false;
+    } else if (c === "\u044C") {
+      if (prev && !prev.v && !ALWAYS_HARD.includes(prev.b))
+        prev.s = true;
+      sep = true;
+    } else if (CONS.includes(c)) {
+      if (prev && !prev.v && prev.b === c && !sep)
+        continue;
+      toks.push({ v: false, b: c, s: ALWAYS_SOFT.includes(c) });
+      sep = false;
+    } else
+      sep = true;
   }
+  for (let i = toks.length - 1; i >= 0; i--) {
+    const t2 = toks[i];
+    if (t2.v)
+      continue;
+    const next = toks[i + 1];
+    if (!next) {
+      if (DEVOICE[t2.b])
+        t2.b = DEVOICE[t2.b];
+    } else if (!next.v) {
+      if (VOICELESS.includes(next.b) && DEVOICE[t2.b])
+        t2.b = DEVOICE[t2.b];
+      else if (VOICING.includes(next.b) && VOICE[t2.b])
+        t2.b = VOICE[t2.b];
+    }
+  }
+  for (let i = toks.length - 1; i > 0; i--) {
+    const a = toks[i - 1], b = toks[i];
+    if (!a.v && !b.v && a.b === b.b) {
+      a.s = b.s;
+      if (st > i - 1)
+        st--;
+      toks.splice(i, 1);
+    }
+  }
+  if (st < 0)
+    st = toks.findIndex((t2) => t2.v);
+  for (let i = toks.length - 2; i >= 0; i--) {
+    const t2 = toks[i], n = toks[i + 1];
+    if (!t2.v && !n.v && n.s && "\u0442\u0434\u0441\u0437\u043D".includes(t2.b) && "\u0442\u0434\u0441\u0437\u043D\u043B\u0447\u0449".includes(n.b))
+      t2.s = true;
+  }
+  for (let i = 0; i < toks.length; i++) {
+    const t2 = toks[i];
+    if (!t2.v || i === st)
+      continue;
+    const p = toks[i - 1];
+    const soft = !!p && !p.v && p.s;
+    const q = t2.b;
+    if (i > st) {
+      if (q === "\u0430" || q === "\u043E")
+        t2.b = soft && i !== toks.length - 1 ? "\u0438" : "\u044A";
+      else if (q === "\u044D")
+        t2.b = soft ? "\u0438" : "\u044B";
+    } else {
+      if (q === "\u0430" || q === "\u043E" || q === "\u044D")
+        t2.b = soft ? "\u0438" : q === "\u044D" ? "\u044B" : "\u0430";
+    }
+  }
+  return { toks, st };
+}
+function tokStr(t2) {
+  return t2.v || !t2.s || ALWAYS_SOFT.includes(t2.b) ? t2.b : t2.b + "'";
+}
+function supportOf(word, stressIdx) {
+  var _a2;
+  const v = word[stressIdx];
+  if (!VOWELS.includes(v))
+    return rhymeKey(word, stressIdx).support;
+  const softV = SOFT_SERIES.includes(v);
+  const prev = word[stressIdx - 1];
+  if (prev === "-" || (prev === "\u044C" || prev === "\u044A") && !softV || prev === "\u0439" && CONS.includes((_a2 = word[stressIdx - 2]) != null ? _a2 : ""))
+    return rhymeKey(word, stressIdx).support;
+  if (!prev || VOWELS.includes(prev) || !CONS.includes(prev) && prev !== "\u044C" && prev !== "\u044A")
+    return softV && v !== "\u0438" ? "\u0439" : "";
+  if (prev === "\u044C" || prev === "\u044A") {
+    const c2 = word[stressIdx - 2];
+    if (!c2 || !CONS.includes(c2))
+      return "\u0439";
+    const soft2 = ALWAYS_SOFT.includes(c2) || prev === "\u044C" && !ALWAYS_HARD.includes(c2);
+    return (soft2 && !ALWAYS_SOFT.includes(c2) ? c2 + "'" : c2) + "\u0439";
+  }
+  let c = prev;
+  const p2 = word[stressIdx - 2];
+  if (c === "\u0447" && p2 && "\u0441\u0437\u0436\u0442\u0434".includes(p2) || c === "\u0448" && p2 && "\u0441\u0437".includes(p2) || c === "\u0436" && p2 && "\u0441\u0437".includes(p2))
+    return rhymeKey(word, stressIdx).support;
+  if (c === "\u0433" && stressIdx === word.length - 1 && v === "\u043E" && /[ое]го$/.test(word) && !OGO_KEEP_G.has(word))
+    c = "\u0432";
+  const soft = ALWAYS_SOFT.includes(c) || softV && !ALWAYS_HARD.includes(c);
+  return soft && !ALWAYS_SOFT.includes(c) ? c + "'" : c;
+}
+function rhymeKey(word, stressIdx) {
+  const { toks, st } = transcribe(word, stressIdx);
+  if (st < 0)
+    return { key: "", support: "" };
+  const key = toks.slice(st).map(tokStr).join("");
+  const p = toks[st - 1];
+  if (!p || p.v)
+    return { key, support: "" };
+  const pp = toks[st - 2];
+  const support = p.b === "\u0439" && pp && !pp.v ? tokStr(pp) + "\u0439" : tokStr(p);
   return { key, support };
+}
+var V0 = CONS.length * 2;
+var NCODES = V0 + KEY_VOWELS.length;
+var GROUPS = ["\u043F\u0431\u0442\u0434\u043A\u0433", "\u0444\u0432\u0441\u0437\u0448\u0436\u0445\u0449", "\u0446\u0447", "\u043C\u043D", "\u043B\u0440", "\u0439"];
+var VOICE_PAIRS = ["\u043F\u0431", "\u0442\u0434", "\u043A\u0433", "\u0444\u0432", "\u0441\u0437", "\u0448\u0436"];
+var CLOSE_PAIRS = { \u043A\u0445: 0.4, \u0433\u0445: 0.4, \u0441\u0448: 0.4, \u0437\u0436: 0.4, \u0449\u0448: 0.3, \u0447\u0449: 0.4, \u0446\u0441: 0.4, \u0446\u0442: 0.5, \u0447\u0448: 0.5, \u0447\u0442: 0.5, \u043C\u043D: 0.35, \u043B\u0440: 0.4, \u0439\u043B: 0.7 };
+function baseCost(a, b) {
+  var _a2;
+  if (a === b)
+    return 0;
+  const pair = a < b ? a + b : b + a;
+  if (VOICE_PAIRS.some((p) => p === pair || p === b + a))
+    return 0.25;
+  const close = (_a2 = CLOSE_PAIRS[pair]) != null ? _a2 : CLOSE_PAIRS[b + a];
+  if (close !== void 0)
+    return close;
+  if (GROUPS.some((g) => g.includes(a) && g.includes(b)))
+    return 0.5;
+  return 0.9;
+}
+var VOWEL_PAIRS = { \u044A\u0438: 0.15, \u044A\u044B: 0.3, \u0438\u044B: 0.25, \u0438\u044D: 0.3, \u044B\u044D: 0.35 };
+var COST = new Float64Array(NCODES * NCODES);
+var _a, _b;
+for (let i = 0; i < NCODES; i++)
+  for (let j = 0; j < NCODES; j++) {
+    let c;
+    if (i < V0 && j < V0) {
+      c = baseCost(CONS[i >> 1], CONS[j >> 1]);
+      if ((i & 1) !== (j & 1))
+        c = Math.min(1, c + (i >> 1 === j >> 1 ? 0.2 : 0.15));
+    } else if (i >= V0 && j >= V0) {
+      const a = KEY_VOWELS[i - V0], b = KEY_VOWELS[j - V0];
+      c = a === b ? 0 : (_b = (_a = VOWEL_PAIRS[a + b]) != null ? _a : VOWEL_PAIRS[b + a]) != null ? _b : 0.8;
+    } else
+      c = 99;
+    COST[i * NCODES + j] = c;
+  }
+function encodeKey(key) {
+  const out = [];
+  for (let i = 0; i < key.length; i++) {
+    const c = key[i];
+    const ci = CONS.indexOf(c);
+    if (ci >= 0) {
+      const soft = ALWAYS_SOFT.includes(c) || key[i + 1] === "'";
+      out.push(ci * 2 + (soft ? 1 : 0));
+    } else {
+      const vi = KEY_VOWELS.indexOf(c);
+      if (vi >= 0)
+        out.push(V0 + vi);
+    }
+  }
+  return Uint8Array.from(out);
+}
+var isVowelCode = (code) => code >= V0;
+function keyClass(codes) {
+  var _a2;
+  if (codes.length === 0)
+    return "";
+  let q = (_a2 = KEY_VOWELS[codes[0] - V0]) != null ? _a2 : "";
+  if (q === "\u044B")
+    q = "\u0438";
+  let n = 0;
+  for (let i = 1; i < codes.length; i++)
+    if (isVowelCode(codes[i]))
+      n++;
+  return q + n;
+}
+function weights(codes) {
+  const w = new Float64Array(codes.length);
+  let seenVowel = false;
+  for (let i = 0; i < codes.length; i++) {
+    if (i > 0 && isVowelCode(codes[i]))
+      seenVowel = true;
+    w[i] = i === 0 || !seenVowel ? 1 : 0.75;
+  }
+  return w;
+}
+function gapCost(codes, i) {
+  const c = codes[i];
+  if (isVowelCode(c))
+    return 99;
+  if (c >> 1 === CONS.indexOf("\u0439"))
+    return 0.4;
+  if (i === codes.length - 1)
+    return i > 0 && !isVowelCode(codes[i - 1]) ? 0.4 : 0.5;
+  return 0.6;
+}
+var dpPrev = new Float64Array(64);
+var dpCur = new Float64Array(64);
+function tailSimilarity(a, b) {
+  const n = a.length, m = b.length;
+  if (n === 0 || m === 0 || n > 60 || m > 60)
+    return 0;
+  const wa = weights(a), wb = weights(b);
+  let total = 0;
+  for (let i = 0; i < n; i++)
+    total += wa[i];
+  for (let j = 0; j < m; j++)
+    total += wb[j];
+  total /= 2;
+  dpPrev[0] = COST[a[0] * NCODES + b[0]];
+  for (let j = 1; j < m; j++)
+    dpPrev[j] = dpPrev[j - 1] + gapCost(b, j) * wb[j];
+  for (let i = 1; i < n; i++) {
+    dpCur[0] = dpPrev[0] + gapCost(a, i) * wa[i];
+    for (let j = 1; j < m; j++) {
+      const w = (wa[i] + wb[j]) / 2;
+      const sub = dpPrev[j - 1] + COST[a[i] * NCODES + b[j]] * w;
+      const del = dpPrev[j] + gapCost(a, i) * wa[i];
+      const ins = dpCur[j - 1] + gapCost(b, j) * wb[j];
+      dpCur[j] = Math.min(sub, del, ins);
+    }
+    dpPrev.set(dpCur.subarray(0, m));
+  }
+  return Math.max(0, 1 - dpPrev[m - 1] / total);
+}
+function supportSimilarity(a, b) {
+  if (!a && !b)
+    return 1;
+  if (!a || !b)
+    return 0.4;
+  const A = supportCodes(a), B = supportCodes(b);
+  const sim = (x, y) => 1 - Math.min(1, COST[x * NCODES + y]);
+  let best = sim(A[A.length - 1], B[B.length - 1]);
+  if (A.length > 1 || B.length > 1)
+    best = Math.max(best, 0.9 * sim(A[0], B[0]));
+  return best;
+}
+var SUPPORT_CODES = /* @__PURE__ */ new Map();
+function supportCodes(s) {
+  let c = SUPPORT_CODES.get(s);
+  if (c === void 0)
+    SUPPORT_CODES.set(s, c = encodeKey(s));
+  return c;
+}
+var RHYME_MIN = 0.8;
+var EXACT_MIN = 0.95;
+var CONSON_MIN = 0.6;
+function wordScore(tail, open, sup) {
+  return open ? tail * (0.5 + 0.5 * sup) : tail;
+}
+function vowelsCompatible(a, b) {
+  let i = 0, j = 0;
+  for (; ; ) {
+    while (i < a.length && !isVowelCode(a[i]))
+      i++;
+    while (j < b.length && !isVowelCode(b[j]))
+      j++;
+    if (i >= a.length || j >= b.length)
+      return i >= a.length && j >= b.length;
+    if (COST[a[i] * NCODES + b[j]] > 0.35)
+      return false;
+    i++;
+    j++;
+  }
+}
+function tierOf(score, tail, sup, vowelsOk) {
+  if (score >= RHYME_MIN)
+    return tail >= EXACT_MIN && sup >= 0.75 ? "exact" : "near";
+  if (score >= CONSON_MIN)
+    return "conson";
+  return vowelsOk ? "asson" : "none";
 }
 function markStress(word, stressIdx) {
   if (countSyllables(word) < 2)
@@ -4872,8 +5117,10 @@ var RhymeDict = class {
     this.loadingHeavy = null;
     this.blocks = /* @__PURE__ */ new Map();
     this.blockCache = /* @__PURE__ */ new Map();
-    this.rhymeSkel = null;
+    this.rhymeCodes = null;
+    this.rhymeClass = null;
     this.rhymeKeyEnd = null;
+    this.soundCache = null;
   }
   /** Ленивая загрузка; повторные вызовы ждут один и тот же промис. */
   load() {
@@ -5040,9 +5287,11 @@ var RhymeDict = class {
   shardSpecs() {
     return [
       // words и rhymes читает doLoad отдельно: без любого из них словарь считается
-      // отсутствующим, поэтому решение принимается до разбора остальных файлов
+      // отсутствующим, поэтому решение принимается до разбора остальных файлов.
+      // rhymes-v2 — ключи в звуках (см. transcribe). Старый rhymes.txt.gz с ключами по
+      // буквам остаётся в релизе для прежних версий плагина: адрес словаря у всех один
       { name: "words", variants: [["words.txt.gz"]], required: true },
-      { name: "rhymes", variants: [["rhymes.txt.gz"]], required: true },
+      { name: "rhymes", variants: [["rhymes-v2.txt.gz"]], required: true },
       { name: "forms", variants: [["forms.blk.gz", "forms.blkidx.gz"], ["forms.blk.gz"], ["forms.txt.gz"]], heavy: true },
       {
         name: "definitions",
@@ -5174,15 +5423,17 @@ var RhymeDict = class {
     this.status = "loading";
     await this.resolveDictDir();
     const wordsRaw = await this.readGz("words.txt.gz");
-    const rhymesRaw = await this.readGz("rhymes.txt.gz");
+    const rhymesRaw = await this.readGz("rhymes-v2.txt.gz");
     if (wordsRaw === null || rhymesRaw === null) {
       this.status = "missing";
       return;
     }
     this.words = buildIndex(wordsRaw);
     this.rhymes = buildIndex(rhymesRaw);
-    this.rhymeSkel = null;
+    this.rhymeCodes = null;
+    this.rhymeClass = null;
     this.rhymeKeyEnd = null;
+    this.soundCache = null;
     this.blocks.clear();
     this.blockCache.clear();
     for (const name of HEAVY_SHARDS)
@@ -5702,25 +5953,22 @@ var RhymeDict = class {
     };
   }
   /**
-   * Созвучия и ассонансы: слова, чей рифм-ключ имеет тот же гласный скелет
-   * (ударная гласная + рисунок заударных), но сам ключ другой — точные рифмы
-   * уже показаны во вкладке рифм.
-   * conson: согласные того же фонетического класса (дорога/погода);
-   * asson: остальные совпадения по гласным (дорога/дома).
-   * Один скан по ~114 тыс. ключей даёт оба списка сразу — так пустые
-   * разделы можно гасить в момент показа слова без второго прохода.
+   * Звуки каждого рифм-ключа и ключи по классам (ударная гласная + число заударных
+   * слогов). Рифмуются только ключи одного класса, так что запрос выравнивается
+   * с несколькими тысячами ключей, а не со всеми ~120 тыс.
    */
-  /** Один раз построить гласные скелеты всех рифм-ключей и позиции табов (для assonancesFor). */
   buildRhymeIndex() {
     const idx = this.rhymes;
+    const byClass = /* @__PURE__ */ new Map();
+    this.rhymeClass = byClass;
     if (!idx) {
-      this.rhymeSkel = [];
+      this.rhymeCodes = [];
       this.rhymeKeyEnd = new Uint32Array(0);
       return;
     }
     const { text, offsets } = idx;
     const n = offsets.length;
-    const skel = new Array(n);
+    const codes = new Array(n);
     const ends = new Uint32Array(n);
     for (let i = 0; i < n; i++) {
       const start = offsets[i];
@@ -5729,53 +5977,106 @@ var RhymeDict = class {
       if (tab < 0 || tab > lineEnd)
         tab = -1;
       ends[i] = tab < 0 ? 0 : tab;
-      skel[i] = tab < 0 ? "\uFFFF" : vowelSkeleton(text.slice(start, tab));
+      codes[i] = tab < 0 ? new Uint8Array(0) : encodeKey(text.slice(start, tab));
+      const cls = keyClass(codes[i]);
+      if (!cls)
+        continue;
+      let list = byClass.get(cls);
+      if (!list)
+        byClass.set(cls, list = []);
+      list.push(i);
     }
-    this.rhymeSkel = skel;
+    this.rhymeCodes = codes;
     this.rhymeKeyEnd = ends;
   }
-  assonancesFor(word, s) {
-    const res = { conson: [], asson: [] };
+  /**
+   * Рифмы, созвучия и ассонансы к слову за один проход по ключам его класса. Каждый ключ
+   * выравнивается с хвостом запроса (tailSimilarity); у кандидатов в рифмы и у открытых
+   * хвостов (рука, окно) сверяется ещё опорная согласная каждого слова — она решает,
+   * точная рифма или близкая, а у открытого хвоста — рифма или только созвучие.
+   * Последний ответ кэшируется: панель спрашивает rhymesFor и assonancesFor подряд.
+   */
+  soundsFor(word, s) {
+    var _a2;
+    const cacheKey = word + "	" + s;
+    if (this.soundCache && this.soundCache.key === cacheKey)
+      return this.soundCache.res;
+    const res = { rhymes: [], conson: [], asson: [] };
     if (!this.rhymes)
       return res;
-    const { key } = rhymeKey(word, s);
-    const skel = vowelSkeleton(key);
-    if (!skel)
-      return res;
-    if (!this.rhymeSkel || !this.rhymeKeyEnd)
+    if (!this.rhymeCodes || !this.rhymeClass || !this.rhymeKeyEnd)
       this.buildRhymeIndex();
-    const skelArr = this.rhymeSkel;
-    const ends = this.rhymeKeyEnd;
-    const qCons = consonantSkeleton(key);
-    const { text, offsets } = this.rhymes;
+    const { key, support } = rhymeKey(word, s);
+    const q = encodeKey(key);
+    const keys = (_a2 = this.rhymeClass.get(keyClass(q))) != null ? _a2 : [];
+    const open = q.length === 1;
     const qSyl = countSyllables(word);
     const qVerb = this.isVerb(word);
-    for (let i = 0; i < offsets.length; i++) {
-      if (skelArr[i] !== skel)
-        continue;
-      const start = offsets[i];
+    const { text } = this.rhymes;
+    const codes = this.rhymeCodes, ends = this.rhymeKeyEnd;
+    const CAP = 2e3;
+    const add = (i, tail, vowelsOk) => {
+      const needSup = open || tail >= RHYME_MIN;
       const tab = ends[i];
-      const k = text.slice(start, tab);
-      if (k === key)
-        continue;
-      const out = consonantSkeleton(k) === qCons ? res.conson : res.asson;
       const nl = text.indexOf("\n", tab);
       const rec = text.slice(tab + 1, nl < 0 ? text.length : nl);
       for (const item of rec.split("|")) {
         const [w, s36, f, p] = item.split(",");
-        if (w === word || w.length < 3 || p === "x" || looksSameRoot(w, word))
+        if (w === word || w.length < 2 || looksSameRoot(w, word) || word.length >= 4 && w.length > word.length && w.endsWith(word))
           continue;
         if (qVerb && p === "v" && prefixVerbPair(w, word))
           continue;
-        out.push({ word: w, s: parseInt(s36, 36), f: +f, p, syl: countSyllables(w), exact: false });
+        const si = parseInt(s36, 36);
+        const sup = needSup ? supportSimilarity(support, supportOf(w, si)) : 0;
+        const score = wordScore(tail, open, sup);
+        const tier = tierOf(score, tail, sup, vowelsOk);
+        if (tier === "none")
+          continue;
+        const rhyme = tier === "exact" || tier === "near";
+        if (!rhyme && (w.length < 3 || p === "x"))
+          continue;
+        const e = { word: w, s: si, f: +f, p, syl: countSyllables(w), exact: tier === "exact", score };
+        (rhyme ? res.rhymes : tier === "conson" ? res.conson : res.asson).push(e);
       }
+    };
+    const later = [];
+    for (const i of keys) {
+      const c = codes[i];
+      const tail = tailSimilarity(q, c);
+      const vowelsOk = vowelsCompatible(q, c);
+      if (tail < CONSON_MIN && !vowelsOk)
+        continue;
+      if (open || tail >= RHYME_MIN)
+        add(i, tail, vowelsOk);
+      else
+        later.push({ i, tail, vowelsOk });
     }
-    const cmp = (a, b) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    const toBand = (x) => Math.round(x * 20);
+    later.sort((a, b) => b.tail - a.tail);
+    for (let k = 0; k < later.length; ) {
+      const b = toBand(later[k].tail);
+      const fullC = res.conson.length >= CAP, fullA = res.asson.length >= CAP;
+      for (; k < later.length && toBand(later[k].tail) === b; k++) {
+        const { i, tail, vowelsOk } = later[k];
+        if (!(tail >= CONSON_MIN ? fullC : fullA))
+          add(i, tail, vowelsOk);
+      }
+      if (res.conson.length >= CAP && res.asson.length >= CAP)
+        break;
+    }
+    const cmp = (a, b) => toBand(b.score) - toBand(a.score) || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    res.rhymes.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || cmp(a, b));
     res.conson.sort(cmp);
     res.asson.sort(cmp);
-    res.conson = res.conson.slice(0, 2e3);
-    res.asson = res.asson.slice(0, 2e3);
+    res.conson = res.conson.slice(0, CAP);
+    res.asson = res.asson.slice(0, CAP);
+    this.soundCache = { key: cacheKey, res };
     return res;
+  }
+  /** Созвучия (согласные близки) и ассонансы (совпали только гласные) — см. soundsFor. */
+  assonancesFor(word, s) {
+    const { conson, asson } = this.soundsFor(word, s);
+    return { conson, asson };
   }
   groupsAt(idx, word) {
     if (!idx)
@@ -5984,8 +6285,8 @@ var RhymeDict = class {
   }
   /** Ёфикация ввода: е-написание -> однозначная ё-версия (береза->берёза); мед/небо/лет не трогает. */
   normalizeYo(word) {
-    let _a;
-    return (_a = this.yoMap.get(word)) != null ? _a : word;
+    let _a2;
+    return (_a2 = this.yoMap.get(word)) != null ? _a2 : word;
   }
   /**
    * Аллитерации: слова с тем же начальным согласным кластером (стр → страна, строка,
@@ -5993,7 +6294,7 @@ var RhymeDict = class {
    * префикса ищем бинарно, дальше линейный скан по блоку.
    */
   alliterationsFor(word) {
-    let _a;
+    let _a2;
     if (!this.words)
       return [];
     const prefix = alliterationPrefix(word);
@@ -6034,7 +6335,7 @@ var RhymeDict = class {
     for (const e of out) {
       if (list.length >= 2e3)
         break;
-      const lemma = (_a = this.lemmasOf(e.word)[0]) != null ? _a : e.word;
+      const lemma = (_a2 = this.lemmasOf(e.word)[0]) != null ? _a2 : e.word;
       const at = seen.get(lemma);
       if (at === void 0) {
         seen.set(lemma, list.length);
@@ -6063,37 +6364,9 @@ var RhymeDict = class {
     const v = this.lookup(word);
     return !!v && v.some((x) => x.p === "v");
   }
-  /** Отранжированные рифмы к слову в конкретном варианте ударения. */
+  /** Отранжированные рифмы к слову в конкретном варианте ударения: точные, за ними близкие. */
   rhymesFor(word, s) {
-    if (!this.rhymes)
-      return [];
-    const { key, support } = rhymeKey(word, s);
-    const line = findLine(this.rhymes, key + "	");
-    if (!line)
-      return [];
-    const qSyl = countSyllables(word);
-    const qVerb = this.isVerb(word);
-    const out = [];
-    for (const item of line.slice(key.length + 1).split("|")) {
-      const [w, s36, f, p] = item.split(",");
-      if (w === word || w.length < 2 || looksSameRoot(w, word))
-        continue;
-      if (qVerb && p === "v" && prefixVerbPair(w, word))
-        continue;
-      const si = parseInt(s36, 36);
-      out.push({
-        word: w,
-        s: si,
-        f: +f,
-        p,
-        syl: countSyllables(w),
-        exact: rhymeKey(w, si).support === support
-      });
-    }
-    out.sort(
-      (a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1)
-    );
-    return out;
+    return this.soundsFor(word, s).rhymes;
   }
 };
 
@@ -6211,8 +6484,8 @@ var en = {
   kindAll: "all",
   kindExact: "exact",
   rhymesHint: "Exact rhymes: the supporting consonant and the whole ending match (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0440\u043E\u0433\u0430)",
-  nearHint: "Near rhymes: same ending, different supporting consonant (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430)",
-  consonHint: "Slant rhymes: same vowels, consonants of a similar sound class (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
+  nearHint: "Near rhymes: the ending sounds the same or almost \u2014 a different supporting consonant or close sounds (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430, \u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
+  consonHint: "Slant rhymes: same vowels, consonants differ but sound alike (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0443, \u0440\u0443\u043A\u0430/\u0432\u043E\u0434\u0430)",
   assonHint: "Assonance: same stressed vowel and vowel pattern, consonants free",
   allitHint: "Alliteration: same opening consonant cluster (str\u2011: strana, struna) \u2014 for line openings",
   kindAllHint: "Everything at once: exact rhymes on top, then near ones, consonance, assonance, alliteration",
@@ -6446,8 +6719,8 @@ var ru = {
   kindAll: "\u0432\u0441\u0435",
   kindExact: "\u0442\u043E\u0447\u043D\u044B\u0435",
   rhymesHint: "\u0422\u043E\u0447\u043D\u044B\u0435 \u0440\u0438\u0444\u043C\u044B: \u0441\u043E\u0432\u043F\u0430\u0434\u0430\u0435\u0442 \u043E\u043F\u043E\u0440\u043D\u0430\u044F \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438 \u0432\u0441\u0451 \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0435 (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0440\u043E\u0433\u0430)",
-  nearHint: "\u0411\u043B\u0438\u0437\u043A\u0438\u0435 \u0440\u0438\u0444\u043C\u044B: \u0442\u043E \u0436\u0435 \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0435, \u043D\u043E \u0434\u0440\u0443\u0433\u0430\u044F \u043E\u043F\u043E\u0440\u043D\u0430\u044F \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u0430\u044F (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430)",
-  consonHint: "\u0421\u043E\u0437\u0432\u0443\u0447\u0438\u044F: \u0442\u0435 \u0436\u0435 \u0433\u043B\u0430\u0441\u043D\u044B\u0435, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u043F\u043E\u0445\u043E\u0436\u0435\u0433\u043E \u043A\u043B\u0430\u0441\u0441\u0430 \u0437\u0432\u0443\u0447\u0430\u043D\u0438\u044F (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
+  nearHint: "\u0411\u043B\u0438\u0437\u043A\u0438\u0435 \u0440\u0438\u0444\u043C\u044B: \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0435 \u0437\u0432\u0443\u0447\u0438\u0442 \u0442\u0430\u043A \u0436\u0435 \u0438\u043B\u0438 \u043F\u043E\u0447\u0442\u0438 \u0442\u0430\u043A \u0436\u0435 \u2014 \u0434\u0440\u0443\u0433\u0430\u044F \u043E\u043F\u043E\u0440\u043D\u0430\u044F \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438\u043B\u0438 \u0431\u043B\u0438\u0437\u043A\u0438\u0435 \u0437\u0432\u0443\u043A\u0438 (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430, \u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
+  consonHint: "\u0421\u043E\u0437\u0432\u0443\u0447\u0438\u044F: \u0442\u0435 \u0436\u0435 \u0433\u043B\u0430\u0441\u043D\u044B\u0435, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u044F\u0442\u0441\u044F, \u043D\u043E \u043F\u043E\u0445\u043E\u0436\u0438 \u043F\u043E \u0437\u0432\u0443\u0447\u0430\u043D\u0438\u044E (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0443, \u0440\u0443\u043A\u0430/\u0432\u043E\u0434\u0430)",
   assonHint: "\u0410\u0441\u0441\u043E\u043D\u0430\u043D\u0441: \u0442\u0430 \u0436\u0435 \u0443\u0434\u0430\u0440\u043D\u0430\u044F \u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438 \u0440\u0438\u0441\u0443\u043D\u043E\u043A \u0433\u043B\u0430\u0441\u043D\u044B\u0445, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u0441\u0432\u043E\u0431\u043E\u0434\u043D\u044B",
   allitHint: "\u0410\u043B\u043B\u0438\u0442\u0435\u0440\u0430\u0446\u0438\u044F: \u0442\u043E\u0442 \u0436\u0435 \u043D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0439 \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0439 \u043A\u043B\u0430\u0441\u0442\u0435\u0440 (\u0441\u0442\u0440- \u2192 \u0441\u0442\u0440\u0430\u043D\u0430, \u0441\u0442\u0440\u0443\u043D\u0430) \u2014 \u0434\u043B\u044F \u0437\u0430\u0447\u0438\u043D\u043E\u0432 \u0441\u0442\u0440\u043E\u043A",
   kindAllHint: "\u0412\u0441\u0451 \u0441\u0440\u0430\u0437\u0443: \u0441\u0432\u0435\u0440\u0445\u0443 \u0442\u043E\u0447\u043D\u044B\u0435 \u0440\u0438\u0444\u043C\u044B, \u0437\u0430\u0442\u0435\u043C \u0431\u043B\u0438\u0437\u043A\u0438\u0435, \u0441\u043E\u0437\u0432\u0443\u0447\u0438\u044F, \u0430\u0441\u0441\u043E\u043D\u0430\u043D\u0441\u044B, \u0430\u043B\u043B\u0438\u0442\u0435\u0440\u0430\u0446\u0438\u044F",
@@ -6832,8 +7105,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Показать/скрыть × очистки по наличию текста в поле. */
   updateClear() {
-    let _a;
-    (_a = this.clearBtn) == null ? void 0 : _a.toggleClass("is-shown", this.inputEl.value.length > 0);
+    let _a2;
+    (_a2 = this.clearBtn) == null ? void 0 : _a2.toggleClass("is-shown", this.inputEl.value.length > 0);
   }
   /** Очистить поиск: пустое слово, сброс истории, фокус в поле. */
   clearSearch() {
@@ -6848,9 +7121,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Фокус в поле поиска (при открытии панели пустой — чтобы сразу печатать). */
   focusSearch() {
-    let _a, _b;
-    (_a = this.inputEl) == null ? void 0 : _a.focus();
-    (_b = this.inputEl) == null ? void 0 : _b.select();
+    let _a2, _b2;
+    (_a2 = this.inputEl) == null ? void 0 : _a2.focus();
+    (_b2 = this.inputEl) == null ? void 0 : _b2.select();
   }
   /** Свайп влево/вправо по телу панели — соседний раздел (только мобильный). */
   registerSwipe() {
@@ -6871,7 +7144,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Точка входа: показать слово (из двойного Ctrl+C, меню, команды, инпута или двойного клика по чипу). */
   async showWord(raw, targetTab) {
-    let _a, _b;
+    let _a2, _b2;
     const query = queryWord(raw);
     if (!query)
       return;
@@ -6922,7 +7195,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.variants = variants != null ? variants : [];
     const user = this.plugin.getUserStress(this.word);
     const valid = user !== void 0 && user < this.word.length && VOWELS.includes(this.word[user]);
-    this.stress = valid ? user : (_b = (_a = this.variants[0]) == null ? void 0 : _a.s) != null ? _b : null;
+    this.stress = valid ? user : (_b2 = (_a2 = this.variants[0]) == null ? void 0 : _a2.s) != null ? _b2 : null;
     if (this.stress === null && countSyllables(this.word) === 1) {
       for (let i = 0; i < this.word.length; i++) {
         if (VOWELS.includes(this.word[i])) {
@@ -7059,10 +7332,10 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Текущая вкладка опустела на новом слове/ударении — уйти на первую непустую. */
   ensureValidTab() {
-    let _a;
+    let _a2;
     const tabs = this.availableTabs();
     if (!tabs.includes(this.tab))
-      this.tab = (_a = tabs[0]) != null ? _a : "rhymes";
+      this.tab = (_a2 = tabs[0]) != null ? _a2 : "rhymes";
   }
   /** Виды созвучий, у которых есть данные, — для меню «качество» внутри «Рифм». */
   availableKinds() {
@@ -7129,8 +7402,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Подсветить кнопку слежения по текущему состоянию настройки. */
   updateFollowBtn() {
-    let _a;
-    (_a = this.followBtn) == null ? void 0 : _a.toggleClass("is-on", this.plugin.settings.followCursor);
+    let _a2;
+    (_a2 = this.followBtn) == null ? void 0 : _a2.toggleClass("is-on", this.plugin.settings.followCursor);
   }
   /** Уйти с генератора: включили слежение — панель должна показывать рифмы, а не пасхалку. */
   leaveGenerator() {
@@ -7200,11 +7473,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Клик по гласной: сменить ударение (и запомнить, если оно не словарное по умолчанию). */
   setStress(i) {
-    let _a, _b;
+    let _a2, _b2;
     if (this.stress === i)
       return;
     this.stress = i;
-    this.plugin.setUserStress(this.word, i === ((_b = (_a = this.variants[0]) == null ? void 0 : _a.s) != null ? _b : -1) ? null : i);
+    this.plugin.setUserStress(this.word, i === ((_b2 = (_a2 = this.variants[0]) == null ? void 0 : _a2.s) != null ? _b2 : -1) ? null : i);
     this.soundKind = this.soundKindPref;
     this.shown = PAGE;
     this.loadRhymes();
@@ -7516,9 +7789,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
   /** Async Clipboard, иначе фолбэк execCommand: мобильный webview часто отклоняет
    * navigator.clipboard (тем более из setTimeout) — без фолбэка копия молча терялась. */
   async writeClipboard(w) {
-    var _a;
+    var _a2;
     try {
-      if (typeof ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) === "function") {
+      if (typeof ((_a2 = navigator.clipboard) == null ? void 0 : _a2.writeText) === "function") {
         await navigator.clipboard.writeText(w);
         return true;
       }
@@ -7832,7 +8105,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Пилюли строгости + фильтры + список рифм. Зовётся заново при любом клике по фильтру. */
   renderSoundResults() {
-    let _a, _b;
+    let _a2, _b2;
     const host = this.resultsHost;
     if (!host)
       return;
@@ -7881,7 +8154,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       const kindBtn = this.filterMenu(
         bar,
         t("kindLabel"),
-        (_b = (_a = kindOpts.find(([k]) => k === this.soundKind)) == null ? void 0 : _a[1]) != null ? _b : t("kindAll"),
+        (_b2 = (_a2 = kindOpts.find(([k]) => k === this.soundKind)) == null ? void 0 : _a2[1]) != null ? _b2 : t("kindAll"),
         this.soundKind !== "all",
         (menu) => {
           for (const [val, label] of kindOpts) {
@@ -8107,17 +8380,17 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Одна сворачиваемая секция вида: заголовок со счётчиком; чипы рисуются лениво при раскрытии. */
   renderKindSection(host, kind, label, list, defaultOpen, L) {
-    let _a;
+    let _a2;
     const details = host.createEl("details", { cls: "rr-ksec" });
-    details.open = (_a = this.sectionOpen[kind]) != null ? _a : defaultOpen;
+    details.open = (_a2 = this.sectionOpen[kind]) != null ? _a2 : defaultOpen;
     const sum = details.createEl("summary", { cls: "rr-ksec-sum" });
     sum.createSpan({ cls: "rr-ksec-label", text: label });
     sum.createSpan({ cls: "rr-ksec-count", text: String(list.length) });
     const body = details.createDiv({ cls: "rr-list" });
     const paint = () => {
-      let _a2;
+      let _a22;
       body.empty();
-      const shown = (_a2 = this.sectionShown[kind]) != null ? _a2 : PAGE;
+      const shown = (_a22 = this.sectionShown[kind]) != null ? _a22 : PAGE;
       for (const e of list.slice(0, shown))
         this.renderChip(body, e, L);
       if (list.length > shown) {
@@ -8331,9 +8604,9 @@ var RhymesView = class extends import_obsidian3.ItemView {
   }
   /** Сворачиваемый подраздел «Ассоциаций»: заголовок + счётчик, тело строит build; раскрытость на сессию. */
   semSection(host, key, title, count, build) {
-    let _a;
+    let _a2;
     const details = host.createEl("details", { cls: "rr-ssec" });
-    details.open = (_a = this.semOpen[key]) != null ? _a : true;
+    details.open = (_a2 = this.semOpen[key]) != null ? _a2 : true;
     const sum = details.createEl("summary", { cls: "rr-ssec-sum" });
     sum.createSpan({ cls: "rr-ssec-label", text: title });
     sum.createSpan({ cls: "rr-ssec-count", text: String(count) });
@@ -8490,8 +8763,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     }
     this.genHost = wrap.createDiv({ cls: "rr-gen-display", attr: { tabindex: "0" } });
     this.genHost.addEventListener("click", () => {
-      let _a;
-      (_a = this.genHost) == null ? void 0 : _a.focus();
+      let _a2;
+      (_a2 = this.genHost) == null ? void 0 : _a2.focus();
       this.rollGen();
     });
     if (this.genWords.length === 0)
@@ -8736,8 +9009,8 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     this.genUnlocked = false;
   }
   async onload() {
-    let _a;
-    this.dict = new RhymeDict(this.app, (_a = this.manifest.dir) != null ? _a : "");
+    let _a2;
+    this.dict = new RhymeDict(this.app, (_a2 = this.manifest.dir) != null ? _a2 : "");
     this.registerView(VIEW_TYPE_RHYMES, (leaf) => new RhymesView(leaf, this));
     await this.loadSettings();
     this.syncLocalManifest();
@@ -8923,11 +9196,11 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     return STARTUP_KEYS.includes(v) ? v : DEFAULT_SETTINGS.startupLoad;
   }
   async loadSettings() {
-    let _a;
+    let _a2;
     const data = await this.loadData();
     this.userStress = data && typeof data.userStress === "object" && data.userStress !== null ? data.userStress : {};
     this.localDicts = data && Array.isArray(data.localDicts) ? data.localDicts.map((d) => ({ ...d, enabled: d.enabled !== false, kind: d.kind === "syns" ? "syns" : "defs" })) : [];
-    const stored = (_a = data == null ? void 0 : data.settings) != null ? _a : {};
+    const stored = (_a2 = data == null ? void 0 : data.settings) != null ? _a2 : {};
     this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
     if (!Array.isArray(stored.lexShow) || stored.lexShow.length !== 4)
       this.settings.lexShow = [true, true, true, this.settings.showRare === true];
@@ -8990,13 +9263,13 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Слово из выделения/под курсором активного редактора, иначе из window-выделения. */
   grabWord() {
-    let _a, _b;
+    let _a2, _b2;
     const mv = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView);
     let raw = "";
     if (mv)
       raw = this.rawFromEditor(mv.editor);
     if (!raw)
-      raw = (_b = (_a = activeWindow.getSelection()) == null ? void 0 : _a.toString()) != null ? _b : "";
+      raw = (_b2 = (_a2 = activeWindow.getSelection()) == null ? void 0 : _a2.toString()) != null ? _b2 : "";
     return this.extractWord(raw);
   }
   wordFromEditor(editor) {
@@ -9018,11 +9291,11 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
    * последняя заметка основной области. В режиме чтения вставлять некуда.
    */
   getEditor() {
-    let _a;
+    let _a2;
     const mv = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView);
     if (mv)
       return mv.getMode() === "source" ? mv.editor : null;
-    const view = (_a = this.app.workspace.getMostRecentLeaf()) == null ? void 0 : _a.view;
+    const view = (_a2 = this.app.workspace.getMostRecentLeaf()) == null ? void 0 : _a2.view;
     if (view instanceof import_obsidian4.MarkdownView && view.getMode() === "source")
       return view.editor;
     return null;
@@ -9033,10 +9306,10 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Включить/выключить слежение за курсором (кнопка в панели, команда, настройка). */
   async setFollow(on) {
-    let _a, _b;
+    let _a2, _b2;
     this.settings.followCursor = on;
     await this.saveSettings();
-    (_a = this.getRhymesView()) == null ? void 0 : _a.updateFollowBtn();
+    (_a2 = this.getRhymesView()) == null ? void 0 : _a2.updateFollowBtn();
     new import_obsidian4.Notice(t(on ? "followOn" : "followOff"));
     if (!on)
       return;
@@ -9049,7 +9322,7 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
       new import_obsidian4.Notice(t("dictMissing"));
       return;
     }
-    (_b = this.getRhymesView()) == null ? void 0 : _b.leaveGenerator();
+    (_b2 = this.getRhymesView()) == null ? void 0 : _b2.leaveGenerator();
     this.syncFromCursor(true);
   }
   /**
@@ -9166,8 +9439,8 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
   }
   /** Перерисовать открытую панель (после подключения/очистки личного словаря). */
   refreshPanel() {
-    let _a;
-    (_a = this.getRhymesView()) == null ? void 0 : _a.refresh();
+    let _a2;
+    (_a2 = this.getRhymesView()) == null ? void 0 : _a2.refresh();
   }
   /** Вкладка панели всегда существует в правом сайдбаре (урок мобильной версии Songwriter). */
   async ensureViewInSidebar(reveal) {
@@ -9680,10 +9953,10 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       (0, import_obsidian4.setIcon)(del, "trash");
       del.addEventListener("click", () => void this.removeDict(d.id));
       row.addEventListener("dragstart", (e) => {
-        let _a;
+        let _a2;
         dragId = d.id;
         row.addClass("is-dragging");
-        (_a = e.dataTransfer) == null ? void 0 : _a.setData("text/plain", d.id);
+        (_a2 = e.dataTransfer) == null ? void 0 : _a2.setData("text/plain", d.id);
         if (e.dataTransfer)
           e.dataTransfer.effectAllowed = "move";
       });
@@ -9699,10 +9972,10 @@ var RhymesSettingTab = class extends import_obsidian4.PluginSettingTab {
       });
       row.addEventListener("dragleave", () => row.removeClass("is-drop"));
       row.addEventListener("drop", (e) => {
-        let _a;
+        let _a2;
         e.preventDefault();
         row.removeClass("is-drop");
-        const from = dragId || ((_a = e.dataTransfer) == null ? void 0 : _a.getData("text/plain")) || "";
+        const from = dragId || ((_a2 = e.dataTransfer) == null ? void 0 : _a2.getData("text/plain")) || "";
         if (from && from !== d.id)
           void this.moveDict(from, d.id);
         dragId = null;

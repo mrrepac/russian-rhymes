@@ -1,7 +1,10 @@
 import { normalizePath, requestUrl } from "obsidian";
 import type { App } from "obsidian";
 import { gzip as gzip_1, ungzip as ungzip_1 } from "pako";
-import { alliterationPrefix, consonantSkeleton, countSyllables, looksSameRoot, prefixVerbPair, rhymeKey, vowelSkeleton } from "./phonetics";
+import {
+  CONSON_MIN, RHYME_MIN, alliterationPrefix, countSyllables, encodeKey, keyClass, looksSameRoot, prefixVerbPair, rhymeKey,
+  supportOf, supportSimilarity, tailSimilarity, tierOf, vowelsCompatible, wordScore
+} from "./phonetics";
 import { CHARACTERS } from "./characters";
 
 /*
@@ -56,7 +59,14 @@ export interface RhymeEntry {
   f: number;
   p: string;
   syl: number;
-  exact: boolean; // совпала опорная согласная — точная (богатая) рифма
+  exact: boolean; // хвост звучит так же и совпала опорная согласная — точная (богатая) рифма
+  score?: number; // сходство звучания с запросом, 0…1 (tailSimilarity с поправкой на опору)
+}
+/** Всё, что звучит похоже, за один проход: рифмы (точные и близкие), созвучия, ассонансы. */
+export interface Sounds {
+  rhymes: RhymeEntry[];
+  conson: RhymeEntry[];
+  asson: RhymeEntry[];
 }
 export interface DefExample {
   text: string;
@@ -248,8 +258,10 @@ const RhymeDict = class {
   localOrder: string[];
   blocks: Map<string, BlockIndex>;
   blockCache: Map<string, string>;
-  rhymeSkel: string[] | null;
+  rhymeCodes: Uint8Array[] | null;
+  rhymeClass: Map<string, number[]> | null;
   rhymeKeyEnd: Uint32Array | null;
+  soundCache: { key: string; res: Sounds } | null;
   missingShards: string[];
   badShards: Set<string>;
   inventoryCache: ShardInfo[] | null;
@@ -325,11 +337,13 @@ const RhymeDict = class {
     // тянется Range-запросом по требованию. Пусто — читаем шард по-старому, целиком.
     this.blocks = /* @__PURE__ */ new Map();
     this.blockCache = /* @__PURE__ */ new Map();
-    // предпосчёт для assonancesFor: гласный скелет каждого рифм-ключа и позиция таба
-    // (конца ключа). Строится лениво один раз; иначе vowelSkeleton пересчитывался бы
-    // по ~120k ключей на КАЖДЫЙ показ слова и клик по гласной — фриз главного потока.
-    this.rhymeSkel = null;
+    // предпосчёт для soundsFor: звуки каждого рифм-ключа, ключи по классам и позиция таба
+    // (конца ключа). Строится лениво один раз; иначе ~120k ключей разбирались бы на
+    // КАЖДЫЙ показ слова и клик по гласной — фриз главного потока.
+    this.rhymeCodes = null;
+    this.rhymeClass = null;
     this.rhymeKeyEnd = null;
+    this.soundCache = null;
   }
   /** Ленивая загрузка; повторные вызовы ждут один и тот же промис. */
   load() {
@@ -507,9 +521,11 @@ const RhymeDict = class {
   shardSpecs(): ShardSpec[] {
     return [
       // words и rhymes читает doLoad отдельно: без любого из них словарь считается
-      // отсутствующим, поэтому решение принимается до разбора остальных файлов
+      // отсутствующим, поэтому решение принимается до разбора остальных файлов.
+      // rhymes-v2 — ключи в звуках (см. transcribe). Старый rhymes.txt.gz с ключами по
+      // буквам остаётся в релизе для прежних версий плагина: адрес словаря у всех один
       { name: "words", variants: [["words.txt.gz"]], required: true },
-      { name: "rhymes", variants: [["rhymes.txt.gz"]], required: true },
+      { name: "rhymes", variants: [["rhymes-v2.txt.gz"]], required: true },
       { name: "forms", variants: [["forms.blk.gz", "forms.blkidx.gz"], ["forms.blk.gz"], ["forms.txt.gz"]], heavy: true },
       {
         name: "definitions",
@@ -652,15 +668,17 @@ const RhymeDict = class {
     this.status = "loading";
     await this.resolveDictDir();
     const wordsRaw = await this.readGz("words.txt.gz");
-    const rhymesRaw = await this.readGz("rhymes.txt.gz");
+    const rhymesRaw = await this.readGz("rhymes-v2.txt.gz");
     if (wordsRaw === null || rhymesRaw === null) {
       this.status = "missing";
       return;
     }
     this.words = buildIndex(wordsRaw);
     this.rhymes = buildIndex(rhymesRaw);
-    this.rhymeSkel = null;
+    this.rhymeCodes = null;
+    this.rhymeClass = null;
     this.rhymeKeyEnd = null;
+    this.soundCache = null;
     // индексы блочных шардов крошечные, берём их сразу: если они есть, вторая волна
     // этим шардам уже не нужна — читаем с диска
     this.blocks.clear();
@@ -1199,25 +1217,22 @@ const RhymeDict = class {
     };
   }
   /**
-   * Созвучия и ассонансы: слова, чей рифм-ключ имеет тот же гласный скелет
-   * (ударная гласная + рисунок заударных), но сам ключ другой — точные рифмы
-   * уже показаны во вкладке рифм.
-   * conson: согласные того же фонетического класса (дорога/погода);
-   * asson: остальные совпадения по гласным (дорога/дома).
-   * Один скан по ~114 тыс. ключей даёт оба списка сразу — так пустые
-   * разделы можно гасить в момент показа слова без второго прохода.
+   * Звуки каждого рифм-ключа и ключи по классам (ударная гласная + число заударных
+   * слогов). Рифмуются только ключи одного класса, так что запрос выравнивается
+   * с несколькими тысячами ключей, а не со всеми ~120 тыс.
    */
-  /** Один раз построить гласные скелеты всех рифм-ключей и позиции табов (для assonancesFor). */
   buildRhymeIndex() {
     const idx = this.rhymes;
+    const byClass = new Map<string, number[]>();
+    this.rhymeClass = byClass;
     if (!idx) {
-      this.rhymeSkel = [];
+      this.rhymeCodes = [];
       this.rhymeKeyEnd = new Uint32Array(0);
       return;
     }
     const { text, offsets } = idx;
     const n = offsets.length;
-    const skel = new Array<string>(n);
+    const codes = new Array<Uint8Array>(n);
     const ends = new Uint32Array(n);
     for (let i = 0; i < n; i++) {
       const start = offsets[i];
@@ -1226,53 +1241,114 @@ const RhymeDict = class {
       if (tab < 0 || tab > lineEnd)
         tab = -1;
       ends[i] = tab < 0 ? 0 : tab;
-      skel[i] = tab < 0 ? "\uFFFF" : vowelSkeleton(text.slice(start, tab));
+      codes[i] = tab < 0 ? new Uint8Array(0) : encodeKey(text.slice(start, tab));
+      const cls = keyClass(codes[i]);
+      if (!cls)
+        continue;
+      let list = byClass.get(cls);
+      if (!list)
+        byClass.set(cls, list = []);
+      list.push(i);
     }
-    this.rhymeSkel = skel;
+    this.rhymeCodes = codes;
     this.rhymeKeyEnd = ends;
   }
-  assonancesFor(word: string, s: number) {
-    const res: { conson: RhymeEntry[]; asson: RhymeEntry[] } = { conson: [], asson: [] };
+  /**
+   * Рифмы, созвучия и ассонансы к слову за один проход по ключам его класса. Каждый ключ
+   * выравнивается с хвостом запроса (tailSimilarity); у кандидатов в рифмы и у открытых
+   * хвостов (рука, окно) сверяется ещё опорная согласная каждого слова — она решает,
+   * точная рифма или близкая, а у открытого хвоста — рифма или только созвучие.
+   * Последний ответ кэшируется: панель спрашивает rhymesFor и assonancesFor подряд.
+   */
+  soundsFor(word: string, s: number): Sounds {
+    const cacheKey = word + "	" + s;
+    if (this.soundCache && this.soundCache.key === cacheKey)
+      return this.soundCache.res;
+    const res: Sounds = { rhymes: [], conson: [], asson: [] };
     if (!this.rhymes)
       return res;
-    const { key } = rhymeKey(word, s);
-    const skel = vowelSkeleton(key);
-    if (!skel)
-      return res;
-    if (!this.rhymeSkel || !this.rhymeKeyEnd)
+    if (!this.rhymeCodes || !this.rhymeClass || !this.rhymeKeyEnd)
       this.buildRhymeIndex();
-    const skelArr = this.rhymeSkel;
-    const ends = this.rhymeKeyEnd;
-    const qCons = consonantSkeleton(key);
-    const { text, offsets } = this.rhymes;
+    const { key, support } = rhymeKey(word, s);
+    const q = encodeKey(key);
+    const keys = this.rhymeClass.get(keyClass(q)) ?? [];
+    const open = q.length === 1;
     const qSyl = countSyllables(word);
     const qVerb = this.isVerb(word);
-    for (let i = 0; i < offsets.length; i++) {
-      if (skelArr[i] !== skel)
-        continue;
-      const start = offsets[i];
+    const { text } = this.rhymes;
+    const codes = this.rhymeCodes, ends = this.rhymeKeyEnd;
+    const CAP = 2e3;
+    const add = (i: number, tail: number, vowelsOk: boolean) => {
+      const needSup = open || tail >= RHYME_MIN;
       const tab = ends[i];
-      const k = text.slice(start, tab);
-      if (k === key)
-        continue;
-      const out = consonantSkeleton(k) === qCons ? res.conson : res.asson;
       const nl = text.indexOf("\n", tab);
       const rec = text.slice(tab + 1, nl < 0 ? text.length : nl);
       for (const item of rec.split("|")) {
         const [w, s36, f, p] = item.split(",");
-        if (w === word || w.length < 3 || p === "x" || looksSameRoot(w, word))
+        // однобуквенные «а», «о», «и» — не рифмы, а мусор словаря; китай-город и
+        // нелюбовь — само слово с приставкой, а не рифма к нему
+        if (w === word || w.length < 2 || looksSameRoot(w, word) || word.length >= 4 && w.length > word.length && w.endsWith(word))
           continue;
         if (qVerb && p === "v" && prefixVerbPair(w, word))
           continue;
-        out.push({ word: w, s: parseInt(s36, 36), f: +f, p, syl: countSyllables(w), exact: false });
+        const si = parseInt(s36, 36);
+        const sup = needSup ? supportSimilarity(support, supportOf(w, si)) : 0;
+        const score = wordScore(tail, open, sup);
+        const tier = tierOf(score, tail, sup, vowelsOk);
+        if (tier === "none")
+          continue;
+        const rhyme = tier === "exact" || tier === "near";
+        // в созвучиях короткие и служебные слова только шумят
+        if (!rhyme && (w.length < 3 || p === "x"))
+          continue;
+        const e = { word: w, s: si, f: +f, p, syl: countSyllables(w), exact: tier === "exact", score };
+        (rhyme ? res.rhymes : tier === "conson" ? res.conson : res.asson).push(e);
       }
+    };
+    // у созвучий и ассонансов оценка слова равна оценке ключа (кроме открытого хвоста),
+    // поэтому их ключи разбираются ступенями сверху вниз — до тех пор, пока раздел не
+    // наберёт показываемое. Разбирать все слова класса значило бы сотни тысяч записей
+    const later: { i: number; tail: number; vowelsOk: boolean }[] = [];
+    for (const i of keys) {
+      const c = codes[i];
+      const tail = tailSimilarity(q, c);
+      const vowelsOk = vowelsCompatible(q, c);
+      if (tail < CONSON_MIN && !vowelsOk)
+        continue;
+      if (open || tail >= RHYME_MIN)
+        add(i, tail, vowelsOk);
+      else
+        later.push({ i, tail, vowelsOk });
     }
-    const cmp = (a: RhymeEntry, b: RhymeEntry) => b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    // звучание — ступенями по 0.05, внутри ступени частое слово важнее чуть лучшего созвучия
+    const toBand = (x: number) => Math.round(x * 20);
+    later.sort((a, b) => b.tail - a.tail);
+    for (let k = 0; k < later.length; ) {
+      const b = toBand(later[k].tail);
+      // полнота считается на входе в ступень: внутри неё порядок решает частота, и
+      // оборвать ступень посередине значило бы потерять частые слова её хвоста
+      const fullC = res.conson.length >= CAP, fullA = res.asson.length >= CAP;
+      for (; k < later.length && toBand(later[k].tail) === b; k++) {
+        const { i, tail, vowelsOk } = later[k];
+        if (!(tail >= CONSON_MIN ? fullC : fullA))
+          add(i, tail, vowelsOk);
+      }
+      if (res.conson.length >= CAP && res.asson.length >= CAP)
+        break;
+    }
+    const cmp = (a: RhymeEntry, b: RhymeEntry) => toBand(b.score) - toBand(a.score) || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    res.rhymes.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || cmp(a, b));
     res.conson.sort(cmp);
     res.asson.sort(cmp);
-    res.conson = res.conson.slice(0, 2e3);
-    res.asson = res.asson.slice(0, 2e3);
+    res.conson = res.conson.slice(0, CAP);
+    res.asson = res.asson.slice(0, CAP);
+    this.soundCache = { key: cacheKey, res };
     return res;
+  }
+  /** Созвучия (согласные близки) и ассонансы (совпали только гласные) — см. soundsFor. */
+  assonancesFor(word: string, s: number) {
+    const { conson, asson } = this.soundsFor(word, s);
+    return { conson, asson };
   }
   groupsAt(idx: TextIndex | null, word: string): string[][] | null {
     if (!idx)
@@ -1570,39 +1646,9 @@ const RhymeDict = class {
     const v = this.lookup(word);
     return !!v && v.some((x) => x.p === "v");
   }
-  /** Отранжированные рифмы к слову в конкретном варианте ударения. */
+  /** Отранжированные рифмы к слову в конкретном варианте ударения: точные, за ними близкие. */
   rhymesFor(word: string, s: number) {
-    if (!this.rhymes)
-      return [];
-    const { key, support } = rhymeKey(word, s);
-    const line = findLine(this.rhymes, key + "	");
-    if (!line)
-      return [];
-    const qSyl = countSyllables(word);
-    const qVerb = this.isVerb(word);
-    const out = [];
-    for (const item of line.slice(key.length + 1).split("|")) {
-      const [w, s36, f, p] = item.split(",");
-      // однобуквенные «а», «о», «и» — не рифмы, а мусор словаря; раньше их прятало
-      // хвостовое правило, теперь отсекаем прямо
-      if (w === word || w.length < 2 || looksSameRoot(w, word))
-        continue;
-      if (qVerb && p === "v" && prefixVerbPair(w, word))
-        continue;
-      const si = parseInt(s36, 36);
-      out.push({
-        word: w,
-        s: si,
-        f: +f,
-        p,
-        syl: countSyllables(w),
-        exact: rhymeKey(w, si).support === support
-      });
-    }
-    out.sort(
-      (a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1)
-    );
-    return out;
+    return this.soundsFor(word, s).rhymes;
   }
 };
 
