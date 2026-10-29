@@ -4592,6 +4592,36 @@ function depthSimilarity(a, b) {
     return near / 2;
   return (near + 1 - Math.min(1, COST[a[1] * NCODES + b[1]])) / 2;
 }
+var CLITICS = [
+  { text: "\u0431\u044B", key: "\u0431\u044B", sep: " ", hosts: "" },
+  { text: "\u0436\u0435", key: "\u0436\u044B", sep: " ", hosts: "" },
+  { text: "\u043B\u0438", key: "\u043B'\u0438", sep: " ", hosts: "" },
+  { text: "\u0442\u043E", key: "\u0442\u044A", sep: "-", hosts: "" },
+  { text: "\u043A\u0430", key: "\u043A\u044A", sep: "-", hosts: "v" },
+  { text: "\u043C\u043D\u0435", key: "\u043C\u043D'\u0438", sep: " ", hosts: "vdx" },
+  { text: "\u0442\u044B", key: "\u0442\u044B", sep: " ", hosts: "vdx" },
+  { text: "\u043C\u044B", key: "\u043C\u044B", sep: " ", hosts: "vdx" },
+  { text: "\u0432\u044B", key: "\u0432\u044B", sep: " ", hosts: "vdx" },
+  { text: "\u044F", key: "\u0439\u044A", sep: " ", hosts: "vdx" }
+].map((c) => ({ ...c, codes: encodeKey(c.key) }));
+var UNSTRESSED = new Set("\u0430 \u0438 \u043D\u043E \u0434\u0430 \u0438\u043B\u0438 \u043B\u0438\u0431\u043E \u043D\u0438 \u043D\u0435 \u0436\u0435 \u0431\u044B \u043B\u0438 \u043B\u044C \u0432 \u0432\u043E \u043D\u0430 \u043D\u0430\u0434 \u043D\u0430\u0434\u043E \u043F\u043E\u0434 \u043F\u043E\u0434\u043E \u043F\u0440\u0438 \u043F\u0440\u043E \u0431\u0435\u0437 \u0431\u0435\u0437\u043E \u0434\u043B\u044F \u0434\u043E \u0437\u0430 \u0438\u0437 \u0438\u0437\u043E \u043A \u043A\u043E \u043E \u043E\u0431 \u043E\u0431\u043E \u043E\u0442 \u043E\u0442\u043E \u043F\u043E \u0441 \u0441\u043E \u0443 \u0447\u0435\u0440\u0435\u0437 \u043F\u0435\u0440\u0435\u0434 \u043F\u0435\u0440\u0435\u0434\u043E \u043C\u0435\u0436 \u0438\u0431\u043E \u0447\u0442\u043E\u0431 \u0447\u0442\u043E\u0431\u044B \u0442\u043E \u0443\u0436 \u043B\u0438\u0448\u044C".split(" "));
+var PERSONAL = new Set("\u044F \u0442\u044B \u043E\u043D \u043E\u043D\u0430 \u043E\u043D\u043E \u043C\u044B \u0432\u044B \u043E\u043D\u0438 \u043C\u0435\u043D\u044F \u0442\u0435\u0431\u044F \u0435\u0433\u043E \u0435\u0451 \u0435\u0435 \u043D\u0430\u0441 \u0432\u0430\u0441 \u0438\u0445 \u043C\u043D\u0435 \u0442\u0435\u0431\u0435 \u0435\u043C\u0443 \u0435\u0439 \u043D\u0430\u043C \u0432\u0430\u043C \u0438\u043C \u043C\u043D\u043E\u0439 \u0442\u043E\u0431\u043E\u0439 \u043D\u0438\u043C \u043D\u0435\u0439 \u043D\u0430\u043C\u0438 \u0432\u0430\u043C\u0438 \u043D\u0438\u043C\u0438".split(" "));
+var VOICE_CODE = new Map([..."\u043F\u0444\u043A\u0442\u0448\u0441"].map((c) => [CONS.indexOf(c), CONS.indexOf(VOICE[c])]));
+var VOICED_OBSTRUENT = new Set([..."\u0431\u0433\u0434\u0436\u0437"].map((c) => CONS.indexOf(c)));
+function joinCodes(host, clitic, out) {
+  out.set(host);
+  let n = host.length;
+  const last = host[n - 1], first = clitic[0];
+  if (!isVowelCode(last) && !isVowelCode(first)) {
+    const lb = last >> 1, fb = first >> 1;
+    if (VOICED_OBSTRUENT.has(fb) && VOICE_CODE.has(lb))
+      out[n - 1] = VOICE_CODE.get(lb) * 2 + (last & 1);
+    if (out[n - 1] >> 1 === fb)
+      n--;
+  }
+  out.set(clitic, n);
+  return out.subarray(0, n + clitic.length);
+}
 var RHYME_MIN = 0.8;
 var EXACT_MIN = 0.95;
 var CONSON_MIN = 0.6;
@@ -6016,7 +6046,7 @@ var RhymeDict = class {
     const cacheKey = word + "	" + s;
     if (this.soundCache && this.soundCache.key === cacheKey)
       return this.soundCache.res;
-    const res = { rhymes: [], conson: [], asson: [] };
+    const res = { rhymes: [], conson: [], asson: [], compound: [] };
     if (!this.rhymes)
       return res;
     if (!this.rhymeCodes || !this.rhymeClass || !this.rhymeKeyEnd)
@@ -6114,8 +6144,89 @@ var RhymeDict = class {
     res.rhymes = uniq(res.rhymes, Infinity);
     res.conson = uniq(res.conson, CAP);
     res.asson = uniq(res.asson, CAP);
+    res.compound = this.compoundsFor(word, q, support, (f, sup, w, si, p) => rankOf(f, sup, w, si, p), cmp);
     this.soundCache = { key: cacheKey, res };
     return res;
+  }
+  /**
+   * Составные рифмы: ударное слово и безударное за ним (мне́ бы к не́бо, губ бы к зу́бы).
+   * Безударное добавляет слог, поэтому хозяева берутся из класса на слог короче. Ключ
+   * хозяина склеивается с безударным (joinCodes) и грубо сверяется с запросом; прошедшие
+   * фразы переоцениваются по собственной транскрипции — там видны и озвончение на стыке,
+   * и слившиеся согласные. От ключа берутся три самых частых хозяина: ключи в файле
+   * уже отсортированы по частоте, а длинный хвост редких слов с частицей — шум. От
+   * каждого хозяина остаётся одна фраза, лучшая: «ге́рц бы, ге́рц вы, ге́рц же…» — не выбор.
+   */
+  compoundsFor(word, q, support, rankOf, cmp) {
+    var _a2;
+    const cls = keyClass(q);
+    const nPost = +cls.slice(1);
+    if (!this.rhymes || !(nPost >= 1))
+      return [];
+    const hostKeys = (_a2 = this.rhymeClass.get(cls[0] + (nPost - 1))) != null ? _a2 : [];
+    const { text } = this.rhymes;
+    const codes = this.rhymeCodes, ends = this.rhymeKeyEnd;
+    const buf = new Uint8Array(128);
+    const best = /* @__PURE__ */ new Map();
+    for (const cl of CLITICS) {
+      for (const i of hostKeys) {
+        const hc = codes[i];
+        if (hc.length + cl.codes.length > 60)
+          continue;
+        if (tailSimilarity(q, joinCodes(hc, cl.codes, buf)) < RHYME_MIN - 0.05)
+          continue;
+        const tab = ends[i];
+        const nl = text.indexOf("\n", tab);
+        let taken = 0;
+        for (const item of text.slice(tab + 1, nl < 0 ? text.length : nl).split("|")) {
+          if (taken >= 3)
+            break;
+          const [w, s36, f, p] = item.split(",");
+          if (+f < 2 || w === word || w === cl.text || w.includes("-") || UNSTRESSED.has(w) || looksSameRoot(w, word))
+            continue;
+          if (cl.hosts && (!cl.hosts.includes(p) || PERSONAL.has(w) && PERSONAL.has(cl.text)))
+            continue;
+          const phrase = w + cl.sep + cl.text;
+          if (this.lookup(phrase))
+            continue;
+          const si = parseInt(s36, 36);
+          const k = rhymeKey(phrase, si);
+          const tail = tailSimilarity(q, encodeKey(k.key));
+          const sup = supportSimilarity(support, k.support);
+          const score = wordScore(tail, false, sup);
+          if (score < RHYME_MIN)
+            continue;
+          taken++;
+          const had = best.get(w);
+          if (had && had.score >= score)
+            continue;
+          best.set(w, {
+            word: phrase,
+            s: si,
+            f: +f,
+            p,
+            syl: countSyllables(phrase),
+            exact: tierOf(score, tail, sup, true) === "exact",
+            score,
+            rank: rankOf(+f, sup, w, si, p)
+          });
+        }
+      }
+    }
+    const lemmaSeen = /* @__PURE__ */ new Set();
+    const out = [...best.values()].filter((e) => {
+      var _a3;
+      if (e.p !== "n" && e.p !== "a" && e.p !== "v")
+        return true;
+      const host = e.word.split(/[ -]/)[0];
+      const lm = (_a3 = this.lemmasOf(host)[0]) != null ? _a3 : host;
+      if (lemmaSeen.has(lm))
+        return false;
+      lemmaSeen.add(lm);
+      return true;
+    });
+    out.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || cmp(a, b));
+    return out.slice(0, 300);
   }
   /** Созвучия (согласные близки) и ассонансы (совпали только гласные) — см. soundsFor. */
   assonancesFor(word, s) {
@@ -6522,6 +6633,7 @@ var en = {
   lexRare: "rare",
   tabNear: "near",
   tabConson: "slant",
+  tabCompound: "compound",
   tabAsson: "assonance",
   kindAllit: "alliteration",
   kindLabel: "quality",
@@ -6529,6 +6641,7 @@ var en = {
   kindExact: "exact",
   rhymesHint: "Exact rhymes: the supporting consonant and the whole ending match (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0440\u043E\u0433\u0430)",
   nearHint: "Near rhymes: the ending sounds the same or almost \u2014 a different supporting consonant or close sounds (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430, \u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
+  compoundHint: "Compound rhymes: a word plus an unstressed word after it, so the pair sounds like the query (\u043D\u0435\u0431\u043E/\u043C\u043D\u0435 \u0431\u044B, \u043B\u0435\u0442\u043E/\u0433\u0434\u0435-\u0442\u043E, \u0437\u0443\u0431\u044B/\u0433\u0443\u0431 \u0431\u044B)",
   consonHint: "Slant rhymes: same vowels, consonants differ but sound alike (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0443, \u0440\u0443\u043A\u0430/\u0432\u043E\u0434\u0430)",
   assonHint: "Assonance: same stressed vowel and vowel pattern, consonants free",
   allitHint: "Alliteration: same opening consonant cluster (str\u2011: strana, struna) \u2014 for line openings",
@@ -6757,6 +6870,7 @@ var ru = {
   lexRare: "\u0440\u0435\u0434\u043A\u0430\u044F",
   tabNear: "\u0431\u043B\u0438\u0437\u043A\u0438\u0435",
   tabConson: "\u0441\u043E\u0437\u0432\u0443\u0447\u0438\u044F",
+  tabCompound: "\u0441\u043E\u0441\u0442\u0430\u0432\u043D\u044B\u0435",
   tabAsson: "\u0430\u0441\u0441\u043E\u043D\u0430\u043D\u0441\u044B",
   kindAllit: "\u0430\u043B\u043B\u0438\u0442\u0435\u0440\u0430\u0446\u0438\u044F",
   kindLabel: "\u043A\u0430\u0447\u0435\u0441\u0442\u0432\u043E",
@@ -6764,6 +6878,7 @@ var ru = {
   kindExact: "\u0442\u043E\u0447\u043D\u044B\u0435",
   rhymesHint: "\u0422\u043E\u0447\u043D\u044B\u0435 \u0440\u0438\u0444\u043C\u044B: \u0441\u043E\u0432\u043F\u0430\u0434\u0430\u0435\u0442 \u043E\u043F\u043E\u0440\u043D\u0430\u044F \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438 \u0432\u0441\u0451 \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0435 (\u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0440\u043E\u0433\u0430)",
   nearHint: "\u0411\u043B\u0438\u0437\u043A\u0438\u0435 \u0440\u0438\u0444\u043C\u044B: \u043E\u043A\u043E\u043D\u0447\u0430\u043D\u0438\u0435 \u0437\u0432\u0443\u0447\u0438\u0442 \u0442\u0430\u043A \u0436\u0435 \u0438\u043B\u0438 \u043F\u043E\u0447\u0442\u0438 \u0442\u0430\u043A \u0436\u0435 \u2014 \u0434\u0440\u0443\u0433\u0430\u044F \u043E\u043F\u043E\u0440\u043D\u0430\u044F \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438\u043B\u0438 \u0431\u043B\u0438\u0437\u043A\u0438\u0435 \u0437\u0432\u0443\u043A\u0438 (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0430, \u0434\u043E\u0440\u043E\u0433\u0430/\u043F\u043E\u0433\u043E\u0434\u0430)",
+  compoundHint: "\u0421\u043E\u0441\u0442\u0430\u0432\u043D\u044B\u0435 \u0440\u0438\u0444\u043C\u044B: \u0441\u043B\u043E\u0432\u043E \u0438 \u0431\u0435\u0437\u0443\u0434\u0430\u0440\u043D\u043E\u0435 \u0441\u043B\u043E\u0432\u043E \u0437\u0430 \u043D\u0438\u043C \u0437\u0432\u0443\u0447\u0430\u0442 \u043A\u0430\u043A \u0437\u0430\u043F\u0440\u043E\u0441 (\u043D\u0435\u0431\u043E/\u043C\u043D\u0435 \u0431\u044B, \u043B\u0435\u0442\u043E/\u0433\u0434\u0435-\u0442\u043E, \u0437\u0443\u0431\u044B/\u0433\u0443\u0431 \u0431\u044B)",
   consonHint: "\u0421\u043E\u0437\u0432\u0443\u0447\u0438\u044F: \u0442\u0435 \u0436\u0435 \u0433\u043B\u0430\u0441\u043D\u044B\u0435, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u0440\u0430\u0441\u0445\u043E\u0434\u044F\u0442\u0441\u044F, \u043D\u043E \u043F\u043E\u0445\u043E\u0436\u0438 \u043F\u043E \u0437\u0432\u0443\u0447\u0430\u043D\u0438\u044E (\u0434\u043E\u0440\u043E\u0433\u0430/\u0442\u0440\u0435\u0432\u043E\u0433\u0443, \u0440\u0443\u043A\u0430/\u0432\u043E\u0434\u0430)",
   assonHint: "\u0410\u0441\u0441\u043E\u043D\u0430\u043D\u0441: \u0442\u0430 \u0436\u0435 \u0443\u0434\u0430\u0440\u043D\u0430\u044F \u0433\u043B\u0430\u0441\u043D\u0430\u044F \u0438 \u0440\u0438\u0441\u0443\u043D\u043E\u043A \u0433\u043B\u0430\u0441\u043D\u044B\u0445, \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0435 \u0441\u0432\u043E\u0431\u043E\u0434\u043D\u044B",
   allitHint: "\u0410\u043B\u043B\u0438\u0442\u0435\u0440\u0430\u0446\u0438\u044F: \u0442\u043E\u0442 \u0436\u0435 \u043D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0439 \u0441\u043E\u0433\u043B\u0430\u0441\u043D\u044B\u0439 \u043A\u043B\u0430\u0441\u0442\u0435\u0440 (\u0441\u0442\u0440- \u2192 \u0441\u0442\u0440\u0430\u043D\u0430, \u0441\u0442\u0440\u0443\u043D\u0430) \u2014 \u0434\u043B\u044F \u0437\u0430\u0447\u0438\u043D\u043E\u0432 \u0441\u0442\u0440\u043E\u043A",
@@ -6995,7 +7110,7 @@ var SEM_ABSTRACT_ALL = "-";
 var PAGE = 50;
 var PAGE_MORE = 200;
 var POS_KEYS = ["", "n", "v", "a", "d", "i"];
-var KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
+var KIND_KEYS = ["all", "exact", "near", "compound", "conson", "asson", "allit"];
 var MOOD_FILTER_KEYS = ["", ...MOOD_KEYS];
 var SEM_FILTER_KEYS = ["", SEM_CONCRETE_ALL, SEM_ABSTRACT_ALL, ...SEM_KEYS];
 var STARTUP_KEYS = ["none", "rhymes", "full"];
@@ -7010,6 +7125,7 @@ var KIND_HINT = () => ({
   all: t("kindAllHint"),
   exact: t("rhymesHint"),
   near: t("nearHint"),
+  compound: t("compoundHint"),
   conson: t("consonHint"),
   asson: t("assonHint"),
   allit: t("allitHint")
@@ -7061,6 +7177,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.stashHost = null;
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
+    this.compAll = [];
     this.consAll = [];
     this.assonAll = [];
     this.allitAll = [];
@@ -7285,6 +7402,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.variants = [];
     this.stress = null;
     this.all = [];
+    this.compAll = [];
     this.consAll = [];
     this.assonAll = [];
     this.allitAll = [];
@@ -7313,13 +7431,15 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.allitAll = this.plugin.dict.alliterationsFor(this.word);
     if (this.stress === null) {
       this.all = [];
+      this.compAll = [];
       this.consAll = [];
       this.assonAll = [];
     } else {
-      this.all = this.plugin.dict.rhymesFor(this.word, this.stress);
-      const scan = this.plugin.dict.assonancesFor(this.word, this.stress);
-      this.consAll = scan.conson;
-      this.assonAll = scan.asson;
+      const sounds = this.plugin.dict.soundsFor(this.word, this.stress);
+      this.all = sounds.rhymes;
+      this.compAll = sounds.compound;
+      this.consAll = sounds.conson;
+      this.assonAll = sounds.asson;
     }
     this.loadTraits();
   }
@@ -7336,7 +7456,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const wantSem = !!dict.semantics;
     if (!wantMood && !wantSem)
       return;
-    for (const arr of [this.all, this.consAll, this.assonAll, this.allitAll]) {
+    for (const arr of [this.all, this.compAll, this.consAll, this.assonAll, this.allitAll]) {
       for (const e of arr) {
         if (wantMood && !this.moodMap.has(e.word))
           this.moodMap.set(e.word, dict.sentimentOf(e.word));
@@ -7388,6 +7508,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
       kinds.push(["exact", t("kindExact")]);
     if (this.all.some((e) => !e.exact))
       kinds.push(["near", t("tabNear")]);
+    if (this.compAll.length > 0)
+      kinds.push(["compound", t("tabCompound")]);
     if (this.consAll.length > 0)
       kinds.push(["conson", t("tabConson")]);
     if (this.assonAll.length > 0)
@@ -7415,6 +7537,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
         return this.all.filter((e) => e.exact);
       case "near":
         return this.all.filter((e) => !e.exact);
+      case "compound":
+        return this.compAll;
       case "conson":
         return this.consAll;
       case "asson":
@@ -7434,6 +7558,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
         };
         push(this.all.filter((e) => e.exact));
         push(this.all.filter((e) => !e.exact));
+        push(this.compAll);
         push(this.consAll);
         push(this.assonAll);
         push(this.allitAll);
@@ -7490,7 +7615,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const list = [];
     if (this.stress === null) {
       list.push("rhymes");
-    } else if (this.all.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
+    } else if (this.all.length > 0 || this.compAll.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
       list.push("rhymes");
     }
     if (!this.plugin.dict.heavyReady() || this.definitions && this.definitions.groups.length > 0 || this.forms && this.forms.rows.length > 0 || this.englishTranslations && this.englishTranslations.groups.length > 0)
@@ -8392,13 +8517,14 @@ var RhymesView = class extends import_obsidian3.ItemView {
     const mood = L.mood[this.moodMap.get(e.word) || ""];
     const sem = L.sem[this.semMap.get(e.word) || ""];
     chip.title = `${L.hint}${L.pos[e.p] ? " \xB7 " + L.pos[e.p] : ""} \xB7 ${L.lex[lc]}${mood ? " \xB7 " + mood : ""}${sem ? " \xB7 " + sem : ""}${related ? " \xB7 " + L.related : ""}`;
-    this.attachWordActions(chip, e.word);
+    this.attachWordActions(chip, e.word, e.word.split(/[ -]/)[0]);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
   renderKindSections(host, L) {
     const src = [
       ["exact", t("kindExact"), this.all.filter((e) => e.exact)],
       ["near", t("tabNear"), this.all.filter((e) => !e.exact)],
+      ["compound", t("tabCompound"), this.compAll],
       ["conson", t("tabConson"), this.consAll],
       ["asson", t("tabAsson"), this.assonAll],
       ["allit", t("kindAllit"), this.allitAll]
@@ -8418,7 +8544,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       return;
     }
     for (const [kind, label, list] of toRender) {
-      const def = kind === "exact" || kind === "near" || kind === firstKind;
+      const def = kind === "exact" || kind === "near" || kind === "compound" || kind === firstKind;
       this.renderKindSection(host, kind, label, list, def, L);
     }
   }

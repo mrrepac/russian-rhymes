@@ -474,6 +474,60 @@ function depthSimilarity(a, b) {
     return near / 2;
   return (near + 1 - Math.min(1, COST[a[1] * NCODES + b[1]])) / 2;
 }
+/*
+ * Безударные слова, что прилипают к ударному и удлиняют его хвост на слог: мне́ бы,
+ * где́-то, губ бы. К «не́бо» подходят слова с хвостом на слог короче плюс «бы».
+ * key — звуки самого слова без соседей, sep — как оно пишется после ударного, hosts —
+ * после каких частей речи оно звучит по-русски: местоимение встаёт за глаголом, наречием
+ * или местоимением (где́ ты), «-ка» — только за глаголом (да́й-ка, а не «ещё-ка»), а
+ * «гэ́п мы» — уже бессмыслица.
+ */
+const CLITICS = [
+  { text: "бы", key: "бы", sep: " ", hosts: "" },
+  { text: "же", key: "жы", sep: " ", hosts: "" },
+  { text: "ли", key: "л'и", sep: " ", hosts: "" },
+  { text: "то", key: "тъ", sep: "-", hosts: "" },
+  { text: "ка", key: "къ", sep: "-", hosts: "v" },
+  { text: "мне", key: "мн'и", sep: " ", hosts: "vdx" },
+  { text: "ты", key: "ты", sep: " ", hosts: "vdx" },
+  { text: "мы", key: "мы", sep: " ", hosts: "vdx" },
+  { text: "вы", key: "вы", sep: " ", hosts: "vdx" },
+  { text: "я", key: "йъ", sep: " ", hosts: "vdx" }
+].map((c) => ({ ...c, codes: encodeKey(c.key) }));
+/**
+ * Слова без своего ударения — предлоги, союзы, частицы. Ударение безударному слову они
+ * не дадут: «до́ вы» и «не́ бы» на слух — просто «довы», «небы».
+ */
+const UNSTRESSED = new Set(("а и но да или либо ни не же бы ли ль в во на над надо под подо при про без безо для до за " +
+  "из изо к ко о об обо от ото по с со у через перед передо меж ибо чтоб чтобы то уж лишь").split(" "));
+/** Личные местоимения: за ними безударное местоимение — уже не фраза («я́ мы», «она́ вы»). */
+const PERSONAL = new Set(("я ты он она оно мы вы они меня тебя его её ее нас вас их мне тебе ему ей нам вам им " +
+  "мной тобой ним ней нами вами ними").split(" "));
+const VOICE_CODE = new Map([..."пфктшс"].map((c) => [CONS.indexOf(c), CONS.indexOf(VOICE[c])]));
+const VOICED_OBSTRUENT = new Set([..."бгджз"].map((c) => CONS.indexOf(c)));
+/**
+ * Склеить хвост слова с безударным словом за ним, как на слух: глухая перед звонкой
+ * озвончается (сад бы [задбы]), две одинаковые согласные сливаются (губ бы [губы]).
+ * Это грубая склейка для отбора; найденную фразу потом переоценивает rhymeKey целиком.
+ * @param {Uint8Array} host
+ * @param {Uint8Array} clitic
+ * @param {Uint8Array} out буфер не короче host.length + clitic.length
+ * @returns {Uint8Array} вид на заполненную часть out
+ */
+function joinCodes(host, clitic, out) {
+  out.set(host);
+  let n = host.length;
+  const last = host[n - 1], first = clitic[0];
+  if (!isVowelCode(last) && !isVowelCode(first)) {
+    const lb = last >> 1, fb = first >> 1;
+    if (VOICED_OBSTRUENT.has(fb) && VOICE_CODE.has(lb))
+      out[n - 1] = VOICE_CODE.get(lb) * 2 + (last & 1);
+    if (out[n - 1] >> 1 === fb)
+      n--;
+  }
+  out.set(clitic, n);
+  return out.subarray(0, n + clitic.length);
+}
 const RHYME_MIN = 0.8;
 const EXACT_MIN = 0.95;
 const CONSON_MIN = 0.6;
@@ -614,6 +668,6 @@ function alliterationPrefix(word) {
 
 export {
   VOWELS, alliterationPrefix, consonantSkeleton, countSyllables, encodeKey, keyClass, looksSameRoot, markStress,
-  depthSimilarity, preSupport, prefixVerbPair, CONSON_MIN, RHYME_MIN, rhymeKey, rhymePair, supportOf, supportSimilarity, tailSimilarity, tierOf, transcribe, vowelSkeleton,
+  CLITICS, PERSONAL, UNSTRESSED, depthSimilarity, joinCodes, preSupport, prefixVerbPair, CONSON_MIN, RHYME_MIN, rhymeKey, rhymePair, supportOf, supportSimilarity, tailSimilarity, tierOf, transcribe, vowelSkeleton,
   vowelsCompatible, wordScore
 };

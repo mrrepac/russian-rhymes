@@ -2,8 +2,8 @@ import { normalizePath, requestUrl } from "obsidian";
 import type { App } from "obsidian";
 import { gzip as gzip_1, ungzip as ungzip_1 } from "pako";
 import {
-  CONSON_MIN, RHYME_MIN, alliterationPrefix, countSyllables, depthSimilarity, encodeKey, keyClass, looksSameRoot, preSupport,
-  prefixVerbPair, rhymeKey,
+  CLITICS, CONSON_MIN, PERSONAL, RHYME_MIN, UNSTRESSED, alliterationPrefix, countSyllables, depthSimilarity, encodeKey, keyClass, looksSameRoot, preSupport,
+  joinCodes, prefixVerbPair, rhymeKey,
   supportOf, supportSimilarity, tailSimilarity, tierOf, vowelsCompatible, wordScore
 } from "./phonetics";
 import { CHARACTERS } from "./characters";
@@ -64,11 +64,15 @@ export interface RhymeEntry {
   score?: number; // сходство звучания с запросом, 0…1 (tailSimilarity с поправкой на опору)
   rank?: number; // вес внутри ступени звучания: частота плюс глубина рифмы и поправка на части речи
 }
-/** Всё, что звучит похоже, за один проход: рифмы (точные и близкие), созвучия, ассонансы. */
+/**
+ * Всё, что звучит похоже, за один проход: рифмы (точные и близкие), созвучия, ассонансы
+ * и составные рифмы — слово с безударным словом после него (не́бо → мне́ бы).
+ */
 export interface Sounds {
   rhymes: RhymeEntry[];
   conson: RhymeEntry[];
   asson: RhymeEntry[];
+  compound: RhymeEntry[];
 }
 export interface DefExample {
   text: string;
@@ -1266,7 +1270,7 @@ const RhymeDict = class {
     const cacheKey = word + "	" + s;
     if (this.soundCache && this.soundCache.key === cacheKey)
       return this.soundCache.res;
-    const res: Sounds = { rhymes: [], conson: [], asson: [] };
+    const res: Sounds = { rhymes: [], conson: [], asson: [], compound: [] };
     if (!this.rhymes)
       return res;
     if (!this.rhymeCodes || !this.rhymeClass || !this.rhymeKeyEnd)
@@ -1385,8 +1389,86 @@ const RhymeDict = class {
     res.rhymes = uniq(res.rhymes, Infinity);
     res.conson = uniq(res.conson, CAP);
     res.asson = uniq(res.asson, CAP);
+    res.compound = this.compoundsFor(word, q, support, (f, sup, w, si, p) => rankOf(f, sup, w, si, p), cmp);
     this.soundCache = { key: cacheKey, res };
     return res;
+  }
+  /**
+   * Составные рифмы: ударное слово и безударное за ним (мне́ бы к не́бо, губ бы к зу́бы).
+   * Безударное добавляет слог, поэтому хозяева берутся из класса на слог короче. Ключ
+   * хозяина склеивается с безударным (joinCodes) и грубо сверяется с запросом; прошедшие
+   * фразы переоцениваются по собственной транскрипции — там видны и озвончение на стыке,
+   * и слившиеся согласные. От ключа берутся три самых частых хозяина: ключи в файле
+   * уже отсортированы по частоте, а длинный хвост редких слов с частицей — шум. От
+   * каждого хозяина остаётся одна фраза, лучшая: «ге́рц бы, ге́рц вы, ге́рц же…» — не выбор.
+   */
+  compoundsFor(word: string, q: Uint8Array, support: string, rankOf: (f: number, sup: number, w: string, si: number, p: string) => number, cmp: (a: RhymeEntry, b: RhymeEntry) => number): RhymeEntry[] {
+    const cls = keyClass(q);
+    const nPost = +cls.slice(1);
+    if (!this.rhymes || !(nPost >= 1))
+      return [];
+    const hostKeys = this.rhymeClass.get(cls[0] + (nPost - 1)) ?? [];
+    const { text } = this.rhymes;
+    const codes = this.rhymeCodes, ends = this.rhymeKeyEnd;
+    const buf = new Uint8Array(128);
+    const best = new Map<string, RhymeEntry>();
+    for (const cl of CLITICS) {
+      for (const i of hostKeys) {
+        const hc = codes[i];
+        if (hc.length + cl.codes.length > 60)
+          continue;
+        // запас 0.05: склейка грубая, точная оценка — у фразы целиком
+        if (tailSimilarity(q, joinCodes(hc, cl.codes, buf)) < RHYME_MIN - 0.05)
+          continue;
+        const tab = ends[i];
+        const nl = text.indexOf("\n", tab);
+        let taken = 0;
+        for (const item of text.slice(tab + 1, nl < 0 ? text.length : nl).split("|")) {
+          if (taken >= 3)
+            break;
+          const [w, s36, f, p] = item.split(",");
+          if (+f < 2 || w === word || w === cl.text || w.includes("-") || UNSTRESSED.has(w) || looksSameRoot(w, word))
+            continue;
+          if (cl.hosts && (!cl.hosts.includes(p) || PERSONAL.has(w) && PERSONAL.has(cl.text)))
+            continue;
+          const phrase = w + cl.sep + cl.text;
+          // где-то, кто-то — уже слова словаря и стоят среди обычных рифм
+          if (this.lookup(phrase))
+            continue;
+          const si = parseInt(s36, 36);
+          const k = rhymeKey(phrase, si);
+          const tail = tailSimilarity(q, encodeKey(k.key));
+          const sup = supportSimilarity(support, k.support);
+          const score = wordScore(tail, false, sup);
+          if (score < RHYME_MIN)
+            continue;
+          taken++;
+          const had = best.get(w);
+          if (had && had.score >= score)
+            continue;
+          best.set(w, {
+            word: phrase, s: si, f: +f, p, syl: countSyllables(phrase),
+            exact: tierOf(score, tail, sup, true) === "exact", score, rank: rankOf(+f, sup, w, si, p)
+          });
+        }
+      }
+    }
+    // одна фраза на лемму хозяина — у существительных, прилагательных и глаголов, где
+    // формы одного слова (ду́п бы, ду́пы бы) друг друга только повторяют. Местоимения не
+    // трогаем: у «мне» и «её» в словаре общая лемма «я», а для рифмы это разные слова
+    const lemmaSeen = new Set<string>();
+    const out = [...best.values()].filter((e) => {
+      if (e.p !== "n" && e.p !== "a" && e.p !== "v")
+        return true;
+      const host = e.word.split(/[ -]/)[0];
+      const lm = this.lemmasOf(host)[0] ?? host;
+      if (lemmaSeen.has(lm))
+        return false;
+      lemmaSeen.add(lm);
+      return true;
+    });
+    out.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || cmp(a, b));
+    return out.slice(0, 300);
   }
   /** Созвучия (согласные близки) и ассонансы (совпали только гласные) — см. soundsFor. */
   assonancesFor(word: string, s: number) {

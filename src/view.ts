@@ -7,7 +7,7 @@ import type { RhymesSettings } from "./main";
 import { t } from "./i18n";
 
 type TabId = "rhymes" | "meaning" | "assoc" | "gen";
-type SoundKind = "all" | "exact" | "near" | "conson" | "asson" | "allit";
+type SoundKind = "all" | "exact" | "near" | "compound" | "conson" | "asson" | "allit";
 /** Готовые подписи для чипов одной отрисовки — см. chipLabels(). */
 interface ChipLabels {
   pos: Record<string, string>;
@@ -167,7 +167,7 @@ const PAGE = 50;
 const PAGE_MORE = 200;
 // допустимые значения запоминаемых фильтров — data.json правят и руками
 const POS_KEYS = ["", "n", "v", "a", "d", "i"];
-const KIND_KEYS = ["all", "exact", "near", "conson", "asson", "allit"];
+const KIND_KEYS = ["all", "exact", "near", "compound", "conson", "asson", "allit"];
 const MOOD_FILTER_KEYS = ["", ...MOOD_KEYS];
 const SEM_FILTER_KEYS = ["", SEM_CONCRETE_ALL, SEM_ABSTRACT_ALL, ...SEM_KEYS];
 // что грузить при старте: ничего / первую волну / обе. Толкования и формы — 360 МБ
@@ -192,6 +192,7 @@ const KIND_HINT = (): Partial<Record<SoundKind, string>> => ({
   all: t("kindAllHint"),
   exact: t("rhymesHint"),
   near: t("nearHint"),
+  compound: t("compoundHint"),
   conson: t("consonHint"),
   asson: t("assonHint"),
   allit: t("allitHint")
@@ -208,6 +209,7 @@ const RhymesView = class extends ItemView {
   variants: StressVariant[];
   stress: number | null; // индекс ударной гласной (словарный или ручной)
   all: RhymeEntry[];
+  compAll: RhymeEntry[]; // составные: слово + безударное (мне́ бы)
   consAll: RhymeEntry[];
   assonAll: RhymeEntry[];
   allitAll: RhymeEntry[];
@@ -335,6 +337,7 @@ const RhymesView = class extends ItemView {
     // рифмы, близкие по смыслу: множество семантически связанных слов текущего слова
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
+    this.compAll = [];
     this.consAll = [];
     // кэши на текущее слово+ударение
     this.assonAll = [];
@@ -579,6 +582,7 @@ const RhymesView = class extends ItemView {
     this.variants = [];
     this.stress = null;
     this.all = [];
+    this.compAll = [];
     this.consAll = [];
     this.assonAll = [];
     this.allitAll = [];
@@ -609,13 +613,15 @@ const RhymesView = class extends ItemView {
     if (this.stress === null) {
       // без ударения рифм не собрать, но аллитерации собраны — пометы им всё равно нужны
       this.all = [];
+      this.compAll = [];
       this.consAll = [];
       this.assonAll = [];
     } else {
-      this.all = this.plugin.dict.rhymesFor(this.word, this.stress);
-      const scan = this.plugin.dict.assonancesFor(this.word, this.stress);
-      this.consAll = scan.conson;
-      this.assonAll = scan.asson;
+      const sounds = this.plugin.dict.soundsFor(this.word, this.stress);
+      this.all = sounds.rhymes;
+      this.compAll = sounds.compound;
+      this.consAll = sounds.conson;
+      this.assonAll = sounds.asson;
     }
     this.loadTraits();
   }
@@ -632,7 +638,7 @@ const RhymesView = class extends ItemView {
     const wantSem = !!dict.semantics;
     if (!wantMood && !wantSem)
       return;
-    for (const arr of [this.all, this.consAll, this.assonAll, this.allitAll]) {
+    for (const arr of [this.all, this.compAll, this.consAll, this.assonAll, this.allitAll]) {
       for (const e of arr) {
         if (wantMood && !this.moodMap.has(e.word))
           this.moodMap.set(e.word, dict.sentimentOf(e.word));
@@ -684,6 +690,8 @@ const RhymesView = class extends ItemView {
       kinds.push(["exact", t("kindExact")]);
     if (this.all.some((e) => !e.exact))
       kinds.push(["near", t("tabNear")]);
+    if (this.compAll.length > 0)
+      kinds.push(["compound", t("tabCompound")]);
     if (this.consAll.length > 0)
       kinds.push(["conson", t("tabConson")]);
     if (this.assonAll.length > 0)
@@ -711,6 +719,8 @@ const RhymesView = class extends ItemView {
         return this.all.filter((e) => e.exact);
       case "near":
         return this.all.filter((e) => !e.exact);
+      case "compound":
+        return this.compAll;
       case "conson":
         return this.consAll;
       case "asson":
@@ -730,6 +740,7 @@ const RhymesView = class extends ItemView {
         };
         push(this.all.filter((e) => e.exact));
         push(this.all.filter((e) => !e.exact));
+        push(this.compAll);
         push(this.consAll);
         push(this.assonAll);
         push(this.allitAll);
@@ -786,7 +797,7 @@ const RhymesView = class extends ItemView {
     const list: TabId[] = [];
     if (this.stress === null) {
       list.push("rhymes");
-    } else if (this.all.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
+    } else if (this.all.length > 0 || this.compAll.length > 0 || this.consAll.length > 0 || this.assonAll.length > 0 || this.allitAll.length > 0) {
       list.push("rhymes");
     }
     // пока вторая волна не приехала, про формы и толкования ничего не известно — вкладку
@@ -1746,13 +1757,15 @@ const RhymesView = class extends ItemView {
     chip.title = `${L.hint}${L.pos[e.p] ? " \xB7 " + L.pos[e.p] : ""} \xB7 ${L.lex[lc]}` +
       `${mood ? " \xB7 " + mood : ""}${sem ? " \xB7 " + sem : ""}` +
       `${related ? " \xB7 " + L.related : ""}`;
-    this.attachWordActions(chip, e.word);
+    // у составной рифмы (мне́ бы) двойной клик ведёт к ударному слову: фразы в словаре нет
+    this.attachWordActions(chip, e.word, e.word.split(/[ -]/)[0]);
   }
   /** Вид «все»: каждая разновидность (точные/близкие/созвучия/ассонансы) — своя секция с заголовком. */
   renderKindSections(host: HTMLElement, L: ChipLabels) {
     const src: [SoundKind, string, RhymeEntry[]][] = [
       ["exact", t("kindExact"), this.all.filter((e) => e.exact)],
       ["near", t("tabNear"), this.all.filter((e) => !e.exact)],
+      ["compound", t("tabCompound"), this.compAll],
       ["conson", t("tabConson"), this.consAll],
       ["asson", t("tabAsson"), this.assonAll],
       ["allit", t("kindAllit"), this.allitAll]
@@ -1772,7 +1785,7 @@ const RhymesView = class extends ItemView {
       return;
     }
     for (const [kind, label, list] of toRender) {
-      const def = kind === "exact" || kind === "near" || kind === firstKind;
+      const def = kind === "exact" || kind === "near" || kind === "compound" || kind === firstKind;
       this.renderKindSection(host, kind, label, list, def, L);
     }
   }
