@@ -2,7 +2,8 @@ import { normalizePath, requestUrl } from "obsidian";
 import type { App } from "obsidian";
 import { gzip as gzip_1, ungzip as ungzip_1 } from "pako";
 import {
-  CONSON_MIN, RHYME_MIN, alliterationPrefix, countSyllables, encodeKey, keyClass, looksSameRoot, prefixVerbPair, rhymeKey,
+  CONSON_MIN, RHYME_MIN, alliterationPrefix, countSyllables, depthSimilarity, encodeKey, keyClass, looksSameRoot, preSupport,
+  prefixVerbPair, rhymeKey,
   supportOf, supportSimilarity, tailSimilarity, tierOf, vowelsCompatible, wordScore
 } from "./phonetics";
 import { CHARACTERS } from "./characters";
@@ -61,6 +62,7 @@ export interface RhymeEntry {
   syl: number;
   exact: boolean; // хвост звучит так же и совпала опорная согласная — точная (богатая) рифма
   score?: number; // сходство звучания с запросом, 0…1 (tailSimilarity с поправкой на опору)
+  rank?: number; // вес внутри ступени звучания: частота плюс глубина рифмы и поправка на части речи
 }
 /** Всё, что звучит похоже, за один проход: рифмы (точные и близкие), созвучия, ассонансы. */
 export interface Sounds {
@@ -1275,9 +1277,26 @@ const RhymeDict = class {
     const open = q.length === 1;
     const qSyl = countSyllables(word);
     const qVerb = this.isVerb(word);
+    const qPos = this.lookup(word)?.find((v) => v.s === s)?.p ?? "";
+    const qPre = preSupport(word, s);
     const { text } = this.rhymes;
     const codes = this.rhymeCodes, ends = this.rhymeKeyEnd;
     const CAP = 2e3;
+    /*
+     * Вес рифмы внутри ступени звучания — частота (0…8) с поправками. Глубина (совпавшие
+     * звуки левее опоры: доро́га/поро́га глубже доро́га/стро́го) даёт до полутора ступеней
+     * частоты, части речи — половину ступени: глагол с глаголом и прилагательное с
+     * прилагательным рифмуются окончаниями, разные части речи дают рифму свежее.
+     * Сильнее нельзя: глубина тогда выталкивает наверх редкие слова (звеня́ вместо дня́).
+     */
+    const rankOf = (f: number, sup: number, w: string, si: number, p: string) => {
+      let r = f;
+      if (sup >= 0.75)
+        r += 1.5 * depthSimilarity(qPre, preSupport(w, si));
+      if (qPos && p && qPos !== "x" && p !== "x")
+        r += qPos !== p ? 0.5 : p === "v" || p === "a" ? -0.5 : 0;
+      return r;
+    };
     const add = (i: number, tail: number, vowelsOk: boolean) => {
       const needSup = open || tail >= RHYME_MIN;
       const tab = ends[i];
@@ -1301,7 +1320,8 @@ const RhymeDict = class {
         // в созвучиях короткие и служебные слова только шумят
         if (!rhyme && (w.length < 3 || p === "x"))
           continue;
-        const e = { word: w, s: si, f: +f, p, syl: countSyllables(w), exact: tier === "exact", score };
+        const rank = rhyme ? rankOf(+f, sup, w, si, p) : +f;
+        const e = { word: w, s: si, f: +f, p, syl: countSyllables(w), exact: tier === "exact", score, rank };
         (rhyme ? res.rhymes : tier === "conson" ? res.conson : res.asson).push(e);
       }
     };
@@ -1336,12 +1356,35 @@ const RhymeDict = class {
       if (res.conson.length >= CAP && res.asson.length >= CAP)
         break;
     }
-    const cmp = (a: RhymeEntry, b: RhymeEntry) => toBand(b.score) - toBand(a.score) || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    const cmp = (a: RhymeEntry, b: RhymeEntry) => toBand(b.score) - toBand(a.score) || b.rank - a.rank || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
     res.rhymes.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || cmp(a, b));
     res.conson.sort(cmp);
     res.asson.sort(cmp);
-    res.conson = res.conson.slice(0, CAP);
-    res.asson = res.asson.slice(0, CAP);
+    /*
+     * Одна форма слова на всю выдачу: нало́гов и ито́гам не нужны, когда выше уже стоят
+     * нало́га и ито́га, а тре́вогу в созвучиях — когда трево́га среди рифм. Разделы идут
+     * сверху вниз, первой остаётся лучшая форма. Формы самого запроса отсеиваются по
+     * любой из лемм: у доро́гой первая лемма — прилагательное, а вторая — сама доро́га.
+     */
+    const qLemmas = new Set<string>([word, ...this.lemmasOf(word)]);
+    const seen = new Set<string>(qLemmas);
+    const uniq = (list: RhymeEntry[], cap: number) => {
+      const out: RhymeEntry[] = [];
+      for (const e of list) {
+        if (out.length >= cap)
+          break;
+        const lms = this.lemmasOf(e.word);
+        const lm = lms[0] ?? e.word;
+        if (seen.has(lm) || lms.some((l) => qLemmas.has(l)))
+          continue;
+        seen.add(lm);
+        out.push(e);
+      }
+      return out;
+    };
+    res.rhymes = uniq(res.rhymes, Infinity);
+    res.conson = uniq(res.conson, CAP);
+    res.asson = uniq(res.asson, CAP);
     this.soundCache = { key: cacheKey, res };
     return res;
   }

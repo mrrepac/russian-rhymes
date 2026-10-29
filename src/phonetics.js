@@ -447,6 +447,33 @@ function supportCodes(s) {
     SUPPORT_CODES.set(s, c = encodeKey(s));
   return c;
 }
+/**
+ * Два звука левее опоры, ближний первым: доро́га → [о, д]. По ним меряется глубина рифмы.
+ * @param {string} word
+ * @param {number} stressIdx
+ * @returns {number[]} коды звуков (encodeKey), 0–2 штуки
+ */
+function preSupport(word, stressIdx) {
+  const { toks, st } = transcribe(word, stressIdx);
+  const out = [];
+  for (let i = st - 2; i >= 0 && i >= st - 3; i--)
+    out.push(encodeKey(tokStr(toks[i]))[0]);
+  return out;
+}
+/**
+ * Глубина рифмы, 0…1: насколько совпадают звуки левее опоры. Дальний звук считается,
+ * только если совпал ближний — доро́га/поро́га (о, потом д/п) глубже, чем доро́га/стро́го.
+ * @param {number[]} a preSupport запроса
+ * @param {number[]} b preSupport кандидата
+ */
+function depthSimilarity(a, b) {
+  if (!a.length || !b.length)
+    return 0;
+  const near = 1 - Math.min(1, COST[a[0] * NCODES + b[0]]);
+  if (near < 0.7 || a.length < 2 || b.length < 2)
+    return near / 2;
+  return (near + 1 - Math.min(1, COST[a[1] * NCODES + b[1]])) / 2;
+}
 const RHYME_MIN = 0.8;
 const EXACT_MIN = 0.95;
 const CONSON_MIN = 0.6;
@@ -587,6 +614,6 @@ function alliterationPrefix(word) {
 
 export {
   VOWELS, alliterationPrefix, consonantSkeleton, countSyllables, encodeKey, keyClass, looksSameRoot, markStress,
-  prefixVerbPair, CONSON_MIN, RHYME_MIN, rhymeKey, rhymePair, supportOf, supportSimilarity, tailSimilarity, tierOf, transcribe, vowelSkeleton,
+  depthSimilarity, preSupport, prefixVerbPair, CONSON_MIN, RHYME_MIN, rhymeKey, rhymePair, supportOf, supportSimilarity, tailSimilarity, tierOf, transcribe, vowelSkeleton,
   vowelsCompatible, wordScore
 };

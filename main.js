@@ -4577,6 +4577,21 @@ function supportCodes(s) {
     SUPPORT_CODES.set(s, c = encodeKey(s));
   return c;
 }
+function preSupport(word, stressIdx) {
+  const { toks, st } = transcribe(word, stressIdx);
+  const out = [];
+  for (let i = st - 2; i >= 0 && i >= st - 3; i--)
+    out.push(encodeKey(tokStr(toks[i]))[0]);
+  return out;
+}
+function depthSimilarity(a, b) {
+  if (!a.length || !b.length)
+    return 0;
+  const near = 1 - Math.min(1, COST[a[0] * NCODES + b[0]]);
+  if (near < 0.7 || a.length < 2 || b.length < 2)
+    return near / 2;
+  return (near + 1 - Math.min(1, COST[a[1] * NCODES + b[1]])) / 2;
+}
 var RHYME_MIN = 0.8;
 var EXACT_MIN = 0.95;
 var CONSON_MIN = 0.6;
@@ -5997,7 +6012,7 @@ var RhymeDict = class {
    * Последний ответ кэшируется: панель спрашивает rhymesFor и assonancesFor подряд.
    */
   soundsFor(word, s) {
-    var _a2;
+    var _a2, _b2, _c, _d;
     const cacheKey = word + "	" + s;
     if (this.soundCache && this.soundCache.key === cacheKey)
       return this.soundCache.res;
@@ -6012,9 +6027,19 @@ var RhymeDict = class {
     const open = q.length === 1;
     const qSyl = countSyllables(word);
     const qVerb = this.isVerb(word);
+    const qPos = (_d = (_c = (_b2 = this.lookup(word)) == null ? void 0 : _b2.find((v) => v.s === s)) == null ? void 0 : _c.p) != null ? _d : "";
+    const qPre = preSupport(word, s);
     const { text } = this.rhymes;
     const codes = this.rhymeCodes, ends = this.rhymeKeyEnd;
     const CAP = 2e3;
+    const rankOf = (f, sup, w, si, p) => {
+      let r = f;
+      if (sup >= 0.75)
+        r += 1.5 * depthSimilarity(qPre, preSupport(w, si));
+      if (qPos && p && qPos !== "x" && p !== "x")
+        r += qPos !== p ? 0.5 : p === "v" || p === "a" ? -0.5 : 0;
+      return r;
+    };
     const add = (i, tail, vowelsOk) => {
       const needSup = open || tail >= RHYME_MIN;
       const tab = ends[i];
@@ -6035,7 +6060,8 @@ var RhymeDict = class {
         const rhyme = tier === "exact" || tier === "near";
         if (!rhyme && (w.length < 3 || p === "x"))
           continue;
-        const e = { word: w, s: si, f: +f, p, syl: countSyllables(w), exact: tier === "exact", score };
+        const rank2 = rhyme ? rankOf(+f, sup, w, si, p) : +f;
+        const e = { word: w, s: si, f: +f, p, syl: countSyllables(w), exact: tier === "exact", score, rank: rank2 };
         (rhyme ? res.rhymes : tier === "conson" ? res.conson : res.asson).push(e);
       }
     };
@@ -6064,12 +6090,30 @@ var RhymeDict = class {
       if (res.conson.length >= CAP && res.asson.length >= CAP)
         break;
     }
-    const cmp = (a, b) => toBand(b.score) - toBand(a.score) || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
+    const cmp = (a, b) => toBand(b.score) - toBand(a.score) || b.rank - a.rank || b.f - a.f || Math.abs(a.syl - qSyl) - Math.abs(b.syl - qSyl) || (a.word < b.word ? -1 : 1);
     res.rhymes.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || cmp(a, b));
     res.conson.sort(cmp);
     res.asson.sort(cmp);
-    res.conson = res.conson.slice(0, CAP);
-    res.asson = res.asson.slice(0, CAP);
+    const qLemmas = /* @__PURE__ */ new Set([word, ...this.lemmasOf(word)]);
+    const seen = new Set(qLemmas);
+    const uniq = (list, cap) => {
+      var _a3;
+      const out = [];
+      for (const e of list) {
+        if (out.length >= cap)
+          break;
+        const lms = this.lemmasOf(e.word);
+        const lm = (_a3 = lms[0]) != null ? _a3 : e.word;
+        if (seen.has(lm) || lms.some((l) => qLemmas.has(l)))
+          continue;
+        seen.add(lm);
+        out.push(e);
+      }
+      return out;
+    };
+    res.rhymes = uniq(res.rhymes, Infinity);
+    res.conson = uniq(res.conson, CAP);
+    res.asson = uniq(res.asson, CAP);
     this.soundCache = { key: cacheKey, res };
     return res;
   }
