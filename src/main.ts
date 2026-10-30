@@ -3,8 +3,8 @@ import type { App, Debouncer, Editor, PluginManifest, SettingControl, SettingDef
 import type { DictKind, LocalDict } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
-import { VOWELS, markStress, rhymePair } from "./phonetics";
-import { isSpeakerLine, partnerIndex } from "./partner";
+import { markStress } from "./phonetics";
+import { isSpeakerLine } from "./partner";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES, renderShardList, shardTitle } from "./view";
 import { convertDsl } from "./dsl";
 
@@ -487,55 +487,28 @@ const RussianRhymesPlugin = class extends Plugin {
     }
   }
   /**
-   * Строка выше, к которой рифмуется дописываемая: курсор на пустой строке сразу за строфой
-   * или в конце её последней строки. Иначе (правка середины строфы, новая строфа) — null,
-   * и панель, как раньше, берёт последнее слово своей строки.
+   * Предыдущая строка, к которой рифмуется дописываемая: курсор на пустой строке сразу за
+   * строкой или в конце последней строки строфы. Иначе (правка середины строфы, новая
+   * строфа) — null, и панель, как раньше, берёт последнее слово своей строки.
    */
   partnerLine(editor: Editor, line: number, ch: number) {
     const own = editor.getLine(line);
     if (own.trim() !== "") {
-      if (ch < own.replace(/\s+$/, "").length)
+      if (ch < own.replace(/s+$/, "").length)
         return null;
       if (line + 1 < editor.lineCount() && editor.getLine(line + 1).trim() !== "")
         return null;
     }
-    const texts: string[] = [];
-    const ends: string[] = [];
-    // строфа — до пустой строки, заголовка или строки без русских слов (разделитель);
-    // имя говорящего и ремарку пропускаем: это не стих, а реплики по обе стороны рифмуются
-    for (let i = line - 1; i >= 0 && i >= line - 12; i--) {
+    // имя говорящего и ремарку перешагиваем: это не стих; пустая строка и заголовок — конец строфы
+    for (let i = line - 1; i >= 0 && i >= line - 4; i--) {
       const text = editor.getLine(i);
       const w = this.extractWord(text);
-      if (!w || !/[а-яё]/.test(w) || /^\s*#/.test(text))
-        break;
-      if (isSpeakerLine(text))
-        continue;
-      texts.unshift(text.trim());
-      ends.unshift(w);
+      if (!w || !/[а-яё]/.test(w) || /^s*#/.test(text))
+        return null;
+      if (!isSpeakerLine(text))
+        return { word: w, text: text.trim() };
     }
-    if (ends.length < 2)
-      return null;
-    const stresses = ends.map((w) => this.stressOf(w));
-    const p = partnerIndex(ends, (i, j) => {
-      const si = stresses[i], sj = stresses[j];
-      if (si === null || sj === null)
-        return 0;
-      const tier = rhymePair(ends[i], si, ends[j], sj).tier;
-      return tier === "exact" || tier === "near" ? 2 : tier === "conson" ? 1 : 0;
-    });
-    return p < 0 ? null : { word: ends[p], text: texts[p] };
-  }
-  /** Ударение слова для сравнения концовок: своё, иначе первое из словаря, у односложного — его гласная. */
-  stressOf(raw: string) {
-    const word = this.dict.normalizeYo(raw);
-    const user = this.getUserStress(word);
-    if (user !== void 0 && VOWELS.includes(word[user]))
-      return user;
-    const v = this.dict.lookup(word);
-    if (v && v.length)
-      return v[0].s;
-    const vowels = [...word].map((c, i) => VOWELS.includes(c) ? i : -1).filter((i) => i >= 0);
-    return vowels.length === 1 ? vowels[0] : null;
+    return null;
   }
   /**
    * Спрятать папку личных словарей в проводнике: она служебная, .gz из неё всё равно не
