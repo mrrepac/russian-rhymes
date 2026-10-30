@@ -4,7 +4,7 @@ import type { DictKind, LocalDict } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
 import { VOWELS, markStress, rhymePair } from "./phonetics";
-import { partnerIndex } from "./partner";
+import { isSpeakerLine, partnerIndex } from "./partner";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES, renderShardList, shardTitle } from "./view";
 import { convertDsl } from "./dsl";
 
@@ -501,12 +501,15 @@ const RussianRhymesPlugin = class extends Plugin {
     }
     const texts: string[] = [];
     const ends: string[] = [];
-    // строфа — до пустой строки или строки без русских слов (заголовок, разделитель)
+    // строфа — до пустой строки, заголовка или строки без русских слов (разделитель);
+    // имя говорящего и ремарку пропускаем: это не стих, а реплики по обе стороны рифмуются
     for (let i = line - 1; i >= 0 && i >= line - 12; i--) {
       const text = editor.getLine(i);
       const w = this.extractWord(text);
-      if (!w || !/[а-яё]/.test(w))
+      if (!w || !/[а-яё]/.test(w) || /^\s*#/.test(text))
         break;
+      if (isSpeakerLine(text))
+        continue;
       texts.unshift(text.trim());
       ends.unshift(w);
     }

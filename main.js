@@ -7047,6 +7047,22 @@ function partnerIndex(ends, rhymes) {
     return k - 1;
   return -1;
 }
+function isSpeakerLine(text) {
+  const raw = text.trim();
+  if (/^[(\[].*[)\]]$/.test(raw))
+    return true;
+  const bold = /^(\*\*|__).+(\*\*|__):?$/.test(raw);
+  const t2 = raw.replace(/^[>\-*_\s]+|[*_\s]+$/g, "").replace(/[*_]/g, "");
+  const colon = t2.endsWith(":");
+  const name = t2.replace(/:$/, "").replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 3 || /[.,;!?—–]/.test(name))
+    return false;
+  const letters = name.replace(/[^а-яёa-z]/gi, "");
+  const caps = letters.length >= 2 && letters === letters.toUpperCase();
+  const single = words.length === 1 && /^[А-ЯЁA-Z]/.test(name);
+  return colon || caps || bold || single;
+}
 
 // src/view.ts
 var import_obsidian3 = require("obsidian");
@@ -9596,8 +9612,10 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     for (let i = line - 1; i >= 0 && i >= line - 12; i--) {
       const text = editor.getLine(i);
       const w = this.extractWord(text);
-      if (!w || !/[а-яё]/.test(w))
+      if (!w || !/[а-яё]/.test(w) || /^\s*#/.test(text))
         break;
+      if (isSpeakerLine(text))
+        continue;
       texts.unshift(text.trim());
       ends.unshift(w);
     }
