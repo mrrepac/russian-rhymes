@@ -1158,3 +1158,12 @@
 .nav-folder.rr-hidden-dir {
   display: none;
 }
+
+/* «Рифма к строке …»: откуда взято слово при слежении за курсором */
+.rr-partner {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -250,6 +250,8 @@ const RhymesView = class extends ItemView {
   stashOpen: boolean;
   stashHost: HTMLElement | null;
   semanticOnly: boolean;
+  partnerNote: string; // строка-партнёр, к концовке которой подобраны рифмы (слежение за курсором)
+  nextPartnerNote: string;
   shown: number;
   sectionOpen: Partial<Record<SoundKind, boolean>>;
   sectionShown: Partial<Record<SoundKind, number>>;
@@ -337,6 +339,8 @@ const RhymesView = class extends ItemView {
     // рифмы, близкие по смыслу: множество семантически связанных слов текущего слова
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
+    this.partnerNote = "";
+    this.nextPartnerNote = "";
     this.compAll = [];
     this.consAll = [];
     // кэши на текущее слово+ударение
@@ -484,6 +488,8 @@ const RhymesView = class extends ItemView {
     if (targetTab)
       this.tab = targetTab;
     this.word = query;
+    this.partnerNote = this.nextPartnerNote;
+    this.nextPartnerNote = "";
     this.inputEl.value = this.word;
     this.updateClear();
     if (!this.navigating && this.navStack[this.navPos] !== this.word) {
@@ -768,7 +774,7 @@ const RhymesView = class extends ItemView {
    * выдача мигала бы: недописанные и незнакомые слова, повтор текущего, набор в поле
    * поиска, вкладку генератора. Историю «назад» слежение не копит — это новая точка отсчёта.
    */
-  async followWord(raw: string) {
+  async followWord(raw: string, partnerNote = "") {
     const dict = this.plugin.dict;
     if (dict.status !== "ready")
       return;
@@ -783,6 +789,7 @@ const RhymesView = class extends ItemView {
       return;
     this.navStack = [];
     this.navPos = -1;
+    this.nextPartnerNote = partnerNote;
     await this.showWord(word);
   }
   /** Перезапросить данные текущего слова (после подключения личного словаря). */
@@ -1352,6 +1359,11 @@ const RhymesView = class extends ItemView {
       setIcon(back, "arrow-left");
       back.setAttr("aria-label", t("back") + this.navStack[this.navPos - 1]);
       back.addEventListener("click", () => this.goBack());
+    }
+    if (this.partnerNote) {
+      const note = this.partnerNote.length > 48 ? this.partnerNote.slice(0, 47) + "…" : this.partnerNote;
+      const el = this.bodyEl.createDiv({ cls: "rr-partner", text: t("partnerFor") + " \xAB" + note + "\xBB" });
+      el.setAttr("title", t("partnerHint"));
     }
     const wrap = this.bodyEl.createDiv({ cls: "rr-word" });
     const multiSyl = countSyllables(this.word) > 1;

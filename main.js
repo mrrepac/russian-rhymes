@@ -4650,6 +4650,16 @@ function tierOf(score, tail, sup, vowelsOk) {
     return "conson";
   return vowelsOk ? "asson" : "none";
 }
+function rhymePair(w1, s1, w2, s2) {
+  const a = rhymeKey(w1, s1), b = rhymeKey(w2, s2);
+  const ca = encodeKey(a.key), cb = encodeKey(b.key);
+  if (!ca.length || keyClass(ca) !== keyClass(cb))
+    return { score: 0, tier: "none" };
+  const tail = tailSimilarity(ca, cb);
+  const sup = supportSimilarity(a.support, b.support);
+  const score = wordScore(tail, ca.length === 1, sup);
+  return { score, tier: tierOf(score, tail, sup, vowelsCompatible(ca, cb)) };
+}
 function markStress(word, stressIdx) {
   if (countSyllables(word) < 2)
     return word;
@@ -6715,9 +6725,11 @@ var en = {
   cmdFollow: "Follow the cursor (on/off)",
   followHint: "Follow the cursor: rhymes for the last word of the line you are typing",
   followOn: "Following the cursor",
+  partnerFor: "Rhymes for the line",
+  partnerHint: "You are writing the line that should rhyme with this one (cross, couplet or enclosed scheme), so the panel shows rhymes for its last word",
   followOff: "No longer following the cursor",
   settingFollow: "Follow the cursor",
-  settingFollowDesc: "While you type, the panel shows rhymes for the last word of the current line (or for the selection). It refreshes when you pause; words the dictionary does not know are skipped, so the list does not flicker.",
+  settingFollowDesc: "While you type, the panel shows rhymes for the last word of the current line (or for the selection). It refreshes when you pause; words the dictionary does not know are skipped, so the list does not flicker. On an empty line right after a stanza, or at the end of its last line, it shows rhymes for the line yours should rhyme with.",
   settingStartup: "Load at startup",
   settingStartupDesc: "The whole dictionary takes about 500 MB of memory, 360 MB of which are meanings and word forms. Anything not preloaded is fetched on first use. Loading less takes effect after the next restart.",
   startupNone: "Nothing",
@@ -6952,9 +6964,11 @@ var ru = {
   cmdFollow: "\u0421\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C (\u0432\u043A\u043B/\u0432\u044B\u043A\u043B)",
   followHint: "\u0421\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C: \u0440\u0438\u0444\u043C\u044B \u043A \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0441\u043B\u043E\u0432\u0443 \u0441\u0442\u0440\u043E\u043A\u0438, \u043A\u043E\u0442\u043E\u0440\u0443\u044E \u043F\u0438\u0448\u0435\u0442\u0435",
   followOn: "\u0421\u043B\u0435\u0434\u0443\u044E \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C",
+  partnerFor: "\u0420\u0438\u0444\u043C\u0430 \u043A \u0441\u0442\u0440\u043E\u043A\u0435",
+  partnerHint: "\u0412\u044B \u043F\u0438\u0448\u0435\u0442\u0435 \u0441\u0442\u0440\u043E\u043A\u0443, \u043A\u043E\u0442\u043E\u0440\u0430\u044F \u0434\u043E\u043B\u0436\u043D\u0430 \u0440\u0438\u0444\u043C\u043E\u0432\u0430\u0442\u044C\u0441\u044F \u0441 \u044D\u0442\u043E\u0439 (\u043F\u0435\u0440\u0435\u043A\u0440\u0451\u0441\u0442\u043D\u0430\u044F, \u0441\u043C\u0435\u0436\u043D\u0430\u044F \u0438\u043B\u0438 \u043E\u043F\u043E\u044F\u0441\u044B\u0432\u0430\u044E\u0449\u0430\u044F \u0441\u0445\u0435\u043C\u0430), \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0432 \u043F\u0430\u043D\u0435\u043B\u0438 \u0440\u0438\u0444\u043C\u044B \u043A \u0435\u0451 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0441\u043B\u043E\u0432\u0443",
   followOff: "\u0411\u043E\u043B\u044C\u0448\u0435 \u043D\u0435 \u0441\u043B\u0435\u0436\u0443 \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C",
   settingFollow: "\u0421\u043B\u0435\u0434\u043E\u0432\u0430\u0442\u044C \u0437\u0430 \u043A\u0443\u0440\u0441\u043E\u0440\u043E\u043C",
-  settingFollowDesc: "\u041F\u043E\u043A\u0430 \u0432\u044B \u043F\u0438\u0448\u0435\u0442\u0435, \u043F\u0430\u043D\u0435\u043B\u044C \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u0440\u0438\u0444\u043C\u044B \u043A \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0441\u043B\u043E\u0432\u0443 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u043E\u043A\u0438 (\u0438\u043B\u0438 \u043A \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044E). \u041E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0432 \u043F\u0430\u0443\u0437\u0430\u0445 \u043D\u0430\u0431\u043E\u0440\u0430; \u0441\u043B\u043E\u0432\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043D\u0435\u0442 \u0432 \u0441\u043B\u043E\u0432\u0430\u0440\u0435, \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F \u2014 \u0432\u044B\u0434\u0430\u0447\u0430 \u043D\u0435 \u043C\u0438\u0433\u0430\u0435\u0442.",
+  settingFollowDesc: "\u041F\u043E\u043A\u0430 \u0432\u044B \u043F\u0438\u0448\u0435\u0442\u0435, \u043F\u0430\u043D\u0435\u043B\u044C \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u0440\u0438\u0444\u043C\u044B \u043A \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u043C\u0443 \u0441\u043B\u043E\u0432\u0443 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u0441\u0442\u0440\u043E\u043A\u0438 (\u0438\u043B\u0438 \u043A \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044E). \u041E\u0431\u043D\u043E\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0432 \u043F\u0430\u0443\u0437\u0430\u0445 \u043D\u0430\u0431\u043E\u0440\u0430; \u0441\u043B\u043E\u0432\u0430, \u043A\u043E\u0442\u043E\u0440\u044B\u0445 \u043D\u0435\u0442 \u0432 \u0441\u043B\u043E\u0432\u0430\u0440\u0435, \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u044E\u0442\u0441\u044F \u2014 \u0432\u044B\u0434\u0430\u0447\u0430 \u043D\u0435 \u043C\u0438\u0433\u0430\u0435\u0442. \u041D\u0430 \u043F\u0443\u0441\u0442\u043E\u0439 \u0441\u0442\u0440\u043E\u043A\u0435 \u0441\u0440\u0430\u0437\u0443 \u0437\u0430 \u0441\u0442\u0440\u043E\u0444\u043E\u0439 \u0438\u043B\u0438 \u0432 \u043A\u043E\u043D\u0446\u0435 \u0435\u0451 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0439 \u0441\u0442\u0440\u043E\u043A\u0438 \u2014 \u0440\u0438\u0444\u043C\u044B \u043A \u0441\u0442\u0440\u043E\u043A\u0435, \u0441 \u043A\u043E\u0442\u043E\u0440\u043E\u0439 \u0434\u043E\u043B\u0436\u043D\u0430 \u0440\u0438\u0444\u043C\u043E\u0432\u0430\u0442\u044C\u0441\u044F \u0432\u0430\u0448\u0430.",
   settingStartup: "\u0427\u0442\u043E \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0442\u044C \u043F\u0440\u0438 \u0441\u0442\u0430\u0440\u0442\u0435",
   settingStartupDesc: "\u0421\u043B\u043E\u0432\u0430\u0440\u044C \u0446\u0435\u043B\u0438\u043A\u043E\u043C \u0437\u0430\u043D\u0438\u043C\u0430\u0435\u0442 \u043E\u043A\u043E\u043B\u043E 500 \u041C\u0411 \u043F\u0430\u043C\u044F\u0442\u0438, \u0438\u0437 \u043D\u0438\u0445 360 \u041C\u0411 \u2014 \u0442\u043E\u043B\u043A\u043E\u0432\u0430\u043D\u0438\u044F \u0438 \u0444\u043E\u0440\u043C\u044B \u0441\u043B\u043E\u0432\u0430. \u041D\u0435\u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D\u043D\u043E\u0435 \u043F\u043E\u0434\u0442\u044F\u043D\u0435\u0442\u0441\u044F \u043F\u0440\u0438 \u043F\u0435\u0440\u0432\u043E\u043C \u043E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0438. \u0423\u043C\u0435\u043D\u044C\u0448\u0435\u043D\u0438\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 \u0441\u043E \u0441\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0433\u043E \u0437\u0430\u043F\u0443\u0441\u043A\u0430.",
   startupNone: "\u041D\u0438\u0447\u0435\u0433\u043E",
@@ -7004,6 +7018,34 @@ var ru = {
 function t(key) {
   const lang = import_obsidian2.moment.locale();
   return (lang && lang.startsWith("ru") ? ru : en)[key];
+}
+
+// src/partner.ts
+function partnerIndex(ends, rhymes) {
+  const k = ends.length;
+  const mate = new Array(k).fill(-1);
+  const level = ends.map((_, i) => ends.map((_2, j) => j > i && j - i <= 3 ? rhymes(i, j) : 0));
+  for (const need of [2, 1]) {
+    for (let i = 0; i < k; i++) {
+      if (mate[i] >= 0)
+        continue;
+      for (let j = i + 1; j < k && j - i <= 3; j++) {
+        if (mate[j] < 0 && level[i][j] >= need) {
+          mate[i] = j;
+          mate[j] = i;
+          break;
+        }
+      }
+    }
+  }
+  const free = (i) => i >= 0 && mate[i] < 0;
+  if (free(k - 2))
+    return k - 2;
+  if (free(k - 3) && mate[k - 1] === k - 2)
+    return k - 3;
+  if (free(k - 1) && mate.some((m, i) => m === i + 1))
+    return k - 1;
+  return -1;
 }
 
 // src/view.ts
@@ -7177,6 +7219,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     this.stashHost = null;
     this.relatedWords = /* @__PURE__ */ new Set();
     this.semanticOnly = false;
+    this.partnerNote = "";
+    this.nextPartnerNote = "";
     this.compAll = [];
     this.consAll = [];
     this.assonAll = [];
@@ -7312,6 +7356,8 @@ var RhymesView = class extends import_obsidian3.ItemView {
     if (targetTab)
       this.tab = targetTab;
     this.word = query;
+    this.partnerNote = this.nextPartnerNote;
+    this.nextPartnerNote = "";
     this.inputEl.value = this.word;
     this.updateClear();
     if (!this.navigating && this.navStack[this.navPos] !== this.word) {
@@ -7586,7 +7632,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
    * выдача мигала бы: недописанные и незнакомые слова, повтор текущего, набор в поле
    * поиска, вкладку генератора. Историю «назад» слежение не копит — это новая точка отсчёта.
    */
-  async followWord(raw) {
+  async followWord(raw, partnerNote = "") {
     const dict = this.plugin.dict;
     if (dict.status !== "ready")
       return;
@@ -7601,6 +7647,7 @@ var RhymesView = class extends import_obsidian3.ItemView {
       return;
     this.navStack = [];
     this.navPos = -1;
+    this.nextPartnerNote = partnerNote;
     await this.showWord(word);
   }
   /** Перезапросить данные текущего слова (после подключения личного словаря). */
@@ -8147,6 +8194,11 @@ var RhymesView = class extends import_obsidian3.ItemView {
       (0, import_obsidian3.setIcon)(back, "arrow-left");
       back.setAttr("aria-label", t("back") + this.navStack[this.navPos - 1]);
       back.addEventListener("click", () => this.goBack());
+    }
+    if (this.partnerNote) {
+      const note = this.partnerNote.length > 48 ? this.partnerNote.slice(0, 47) + "\u2026" : this.partnerNote;
+      const el = this.bodyEl.createDiv({ cls: "rr-partner", text: t("partnerFor") + " \xAB" + note + "\xBB" });
+      el.setAttr("title", t("partnerHint"));
     }
     const wrap = this.bodyEl.createDiv({ cls: "rr-word" });
     const multiSyl = countSyllables(this.word) > 1;
@@ -9516,14 +9568,62 @@ var RussianRhymesPlugin = class extends import_obsidian4.Plugin {
     const selection = mv.editor.getSelection();
     const cursor = mv.editor.getCursor();
     const source = selection || mv.editor.getLine(cursor.line);
-    const key = selection ? "s\n" + selection : cursor.line + "\n" + source;
+    const key = selection ? "s\n" + selection : cursor.line + "\n" + source + "\n" + (cursor.ch >= source.replace(/\s+$/, "").length);
     if (!useRecent && key === this.lastFollowKey)
       return;
     this.lastFollowKey = key;
-    const word = this.extractWord(source);
+    const partner = selection ? null : this.partnerLine(mv.editor, cursor.line, cursor.ch);
+    const word = partner ? partner.word : this.extractWord(source);
     if (word && word.length >= MIN_FOLLOW_LEN) {
-      view.followWord(word).catch((e) => console.error("Russian Rhymes: follow failed", e));
+      view.followWord(word, partner ? partner.text : "").catch((e) => console.error("Russian Rhymes: follow failed", e));
     }
+  }
+  /**
+   * Строка выше, к которой рифмуется дописываемая: курсор на пустой строке сразу за строфой
+   * или в конце её последней строки. Иначе (правка середины строфы, новая строфа) — null,
+   * и панель, как раньше, берёт последнее слово своей строки.
+   */
+  partnerLine(editor, line, ch) {
+    const own = editor.getLine(line);
+    if (own.trim() !== "") {
+      if (ch < own.replace(/\s+$/, "").length)
+        return null;
+      if (line + 1 < editor.lineCount() && editor.getLine(line + 1).trim() !== "")
+        return null;
+    }
+    const texts = [];
+    const ends = [];
+    for (let i = line - 1; i >= 0 && i >= line - 12; i--) {
+      const text = editor.getLine(i);
+      const w = this.extractWord(text);
+      if (!w || !/[а-яё]/.test(w))
+        break;
+      texts.unshift(text.trim());
+      ends.unshift(w);
+    }
+    if (ends.length < 2)
+      return null;
+    const stresses = ends.map((w) => this.stressOf(w));
+    const p = partnerIndex(ends, (i, j) => {
+      const si = stresses[i], sj = stresses[j];
+      if (si === null || sj === null)
+        return 0;
+      const tier = rhymePair(ends[i], si, ends[j], sj).tier;
+      return tier === "exact" || tier === "near" ? 2 : tier === "conson" ? 1 : 0;
+    });
+    return p < 0 ? null : { word: ends[p], text: texts[p] };
+  }
+  /** Ударение слова для сравнения концовок: своё, иначе первое из словаря, у односложного — его гласная. */
+  stressOf(raw) {
+    const word = this.dict.normalizeYo(raw);
+    const user = this.getUserStress(word);
+    if (user !== void 0 && VOWELS.includes(word[user]))
+      return user;
+    const v = this.dict.lookup(word);
+    if (v && v.length)
+      return v[0].s;
+    const vowels = [...word].map((c, i) => VOWELS.includes(c) ? i : -1).filter((i) => i >= 0);
+    return vowels.length === 1 ? vowels[0] : null;
   }
   /**
    * Спрятать папку личных словарей в проводнике: она служебная, .gz из неё всё равно не

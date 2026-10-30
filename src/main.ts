@@ -3,7 +3,8 @@ import type { App, Debouncer, Editor, PluginManifest, SettingControl, SettingDef
 import type { DictKind, LocalDict } from "./dict";
 import { RhymeDict } from "./dict";
 import { t } from "./i18n";
-import { markStress } from "./phonetics";
+import { VOWELS, markStress, rhymePair } from "./phonetics";
+import { partnerIndex } from "./partner";
 import { RhymesView, STARTUP_KEYS, VIEW_TYPE_RHYMES, renderShardList, shardTitle } from "./view";
 import { convertDsl } from "./dsl";
 
@@ -474,14 +475,64 @@ const RussianRhymesPlugin = class extends Plugin {
     const selection = mv.editor.getSelection();
     const cursor = mv.editor.getCursor();
     const source = selection || mv.editor.getLine(cursor.line);
-    const key = selection ? "s\n" + selection : cursor.line + "\n" + source;
+    // конец строки в ключе: уход курсора с конца в середину возвращает рифмы к своей строке
+    const key = selection ? "s\n" + selection : cursor.line + "\n" + source + "\n" + (cursor.ch >= source.replace(/\s+$/, "").length);
     if (!useRecent && key === this.lastFollowKey)
       return;
     this.lastFollowKey = key;
-    const word = this.extractWord(source);
+    const partner = selection ? null : this.partnerLine(mv.editor, cursor.line, cursor.ch);
+    const word = partner ? partner.word : this.extractWord(source);
     if (word && word.length >= MIN_FOLLOW_LEN) {
-      view.followWord(word).catch((e) => console.error("Russian Rhymes: follow failed", e));
+      view.followWord(word, partner ? partner.text : "").catch((e) => console.error("Russian Rhymes: follow failed", e));
     }
+  }
+  /**
+   * Строка выше, к которой рифмуется дописываемая: курсор на пустой строке сразу за строфой
+   * или в конце её последней строки. Иначе (правка середины строфы, новая строфа) — null,
+   * и панель, как раньше, берёт последнее слово своей строки.
+   */
+  partnerLine(editor: Editor, line: number, ch: number) {
+    const own = editor.getLine(line);
+    if (own.trim() !== "") {
+      if (ch < own.replace(/\s+$/, "").length)
+        return null;
+      if (line + 1 < editor.lineCount() && editor.getLine(line + 1).trim() !== "")
+        return null;
+    }
+    const texts: string[] = [];
+    const ends: string[] = [];
+    // строфа — до пустой строки или строки без русских слов (заголовок, разделитель)
+    for (let i = line - 1; i >= 0 && i >= line - 12; i--) {
+      const text = editor.getLine(i);
+      const w = this.extractWord(text);
+      if (!w || !/[а-яё]/.test(w))
+        break;
+      texts.unshift(text.trim());
+      ends.unshift(w);
+    }
+    if (ends.length < 2)
+      return null;
+    const stresses = ends.map((w) => this.stressOf(w));
+    const p = partnerIndex(ends, (i, j) => {
+      const si = stresses[i], sj = stresses[j];
+      if (si === null || sj === null)
+        return 0;
+      const tier = rhymePair(ends[i], si, ends[j], sj).tier;
+      return tier === "exact" || tier === "near" ? 2 : tier === "conson" ? 1 : 0;
+    });
+    return p < 0 ? null : { word: ends[p], text: texts[p] };
+  }
+  /** Ударение слова для сравнения концовок: своё, иначе первое из словаря, у односложного — его гласная. */
+  stressOf(raw: string) {
+    const word = this.dict.normalizeYo(raw);
+    const user = this.getUserStress(word);
+    if (user !== void 0 && VOWELS.includes(word[user]))
+      return user;
+    const v = this.dict.lookup(word);
+    if (v && v.length)
+      return v[0].s;
+    const vowels = [...word].map((c, i) => VOWELS.includes(c) ? i : -1).filter((i) => i >= 0);
+    return vowels.length === 1 ? vowels[0] : null;
   }
   /**
    * Спрятать папку личных словарей в проводнике: она служебная, .gz из неё всё равно не
